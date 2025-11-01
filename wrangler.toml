@@ -1,0 +1,23 @@
+name = "massmurdercanada"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "massmurdercanada"
+database_id = "2096de9d-42d1-4430-bd6f-92ff79419f4e"
+
+# Staging/Test - Deploy to workers.dev subdomain
+[env.staging]
+name = "massmurdercanada-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "massmurdercanada"
+database_id = "2096de9d-42d1-4430-bd6f-92ff79419f4e"
+
+# Production
+[env.production]
+name = "massmurdercanada"
+route = { pattern = "massmurdercanada.org/*", zone_name = "massmurdercanada.org" }
+
