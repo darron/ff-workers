@@ -2,6 +2,8 @@
 
 This is the Cloudflare Workers version of the Mass Murder Canada application, converted from the original Go/Echo application.
 
+**Original Project:** [github.com/darron/ff](https://github.com/darron/ff)
+
 ## Features
 
 - Same URL structure as the original application
@@ -48,16 +50,9 @@ This is the Cloudflare Workers version of the Mass Murder Canada application, co
    npx wrangler d1 execute massmurdercanada --file=migrations/0001_initial.sql
    ```
 
-5. **Migrate data from SQLite:**
-   - Update `SQLITE_PATH` in `migrate-data.cjs` if your database is in a different location
-   - Run the migration script:
-     ```bash
-     node migrate-data.cjs
-     ```
-   - Import the generated SQL file:
-     ```bash
-     npx wrangler d1 execute massmurdercanada --file=migrations/0002_data.sql
-     ```
+5. **Migrate data:**
+   - To migrate from SQLite: Update `SQLITE_PATH` in `migrate-data.cjs`, run `node migrate-data.cjs`, then import the generated SQL files
+   - To migrate from a production database dump: Use `import-prod-dump.cjs` to process `database_dump.sql` and import the generated files
 
 6. **Test locally:**
    ```bash
@@ -65,9 +60,9 @@ This is the Cloudflare Workers version of the Mass Murder Canada application, co
    ```
 
 7. **Deploy to Cloudflare:**
-   ```bash
-   npm run deploy
-   ```
+   - Staging: `npm run deploy -- --env staging` (deploys to workers.dev subdomain)
+   - Production Test: `npm run deploy -- --env production-test` (test production database)
+   - Production: `npm run deploy -- --env production` (deploys to massmurdercanada.org)
 
 ## Project Structure
 
@@ -79,10 +74,13 @@ ff-workers/
 │   └── templates.js  # HTML template rendering functions
 ├── migrations/
 │   ├── 0001_initial.sql  # Database schema
-│   └── 0002_data.sql      # Generated data migration (after running migrate-data.js)
+│   ├── 0002_data.sql     # Generated data migration (after running migrate-data.cjs)
+│   └── prod-data/        # Production database migration files
 ├── wrangler.toml     # Cloudflare Workers configuration
 ├── package.json      # Node.js dependencies
-└── migrate-data.cjs  # Script to migrate data from SQLite to D1
+├── migrate-data.cjs  # Script to migrate data from SQLite to D1
+├── import-prod-dump.cjs  # Script to import production database dump
+└── database_dump.sql     # Production database dump file
 ```
 
 ## URL Routes
@@ -106,6 +104,16 @@ The database uses the same schema as the original SQLite database:
 - **records** table: Contains all record data
 - **news_stories** table: Contains associated news stories linked to records
 
+## Environments
+
+The project has multiple deployment environments configured:
+
+- **staging**: Uses the original test database, deployed to `massmurdercanada-staging.darron.workers.dev`
+- **production-test**: Uses the production database, deployed to `massmurdercanada-prod-test.darron.workers.dev` (for testing before going live)
+- **production**: Uses the production database, deployed to `massmurdercanada.org` and `www.massmurdercanada.org`
+
+All environments use Cloudflare D1 databases. See `wrangler.toml` for database configurations.
+
 ## Development
 
 The worker uses Cloudflare Workers with D1 database. Local development uses `wrangler dev` which provides a local D1 database for testing.
@@ -113,5 +121,8 @@ The worker uses Cloudflare Workers with D1 database. Local development uses `wra
 ## Notes
 
 - The UI has been modernized with improved styling
-- All data from the original `ff.db` SQLite database should be migrated
+- Production data has been migrated from the original Go/SQLite application
 - The application maintains the same URL structure for compatibility
+- Dates display as years only (e.g., "2024" instead of "January 1, 2024")
+- News story body_text is not displayed in detail views (only URLs shown)
+- Column sorting works for all table columns (numeric and text)
