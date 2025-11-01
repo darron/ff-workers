@@ -28,5 +28,13 @@ database_id = "abc87d82-e184-4c27-b971-f36fa4784a79"
 # Production
 [env.production]
 name = "massmurdercanada"
-route = { pattern = "massmurdercanada.org/*", zone_name = "massmurdercanada.org" }
+routes = [
+  { pattern = "massmurdercanada.org/*", zone_name = "massmurdercanada.org" },
+  { pattern = "www.massmurdercanada.org/*", zone_name = "massmurdercanada.org" }
+]
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "massmurdercanada-prod"
+database_id = "abc87d82-e184-4c27-b971-f36fa4784a79"
 
