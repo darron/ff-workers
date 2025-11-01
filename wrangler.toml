@@ -7,7 +7,7 @@ binding = "DB"
 database_name = "massmurdercanada"
 database_id = "2096de9d-42d1-4430-bd6f-92ff79419f4e"
 
-# Staging/Test - Deploy to workers.dev subdomain
+# Staging - Complete copy of production data, separate database for testing
 [env.staging]
 name = "massmurdercanada-staging"
 
@@ -15,15 +15,6 @@ name = "massmurdercanada-staging"
 binding = "DB"
 database_name = "massmurdercanada"
 database_id = "2096de9d-42d1-4430-bd6f-92ff79419f4e"
-
-# Production Test - New production database, separate URL for testing
-[env.production-test]
-name = "massmurdercanada-prod-test"
-
-[[env.production-test.d1_databases]]
-binding = "DB"
-database_name = "massmurdercanada-prod"
-database_id = "abc87d82-e184-4c27-b971-f36fa4784a79"
 
 # Production
 [env.production]

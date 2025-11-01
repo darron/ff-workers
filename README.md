@@ -60,8 +60,7 @@ This is the Cloudflare Workers version of the Mass Murder Canada application, co
    ```
 
 7. **Deploy to Cloudflare:**
-   - Staging: `npm run deploy -- --env staging` (deploys to workers.dev subdomain)
-   - Production Test: `npm run deploy -- --env production-test` (test production database)
+   - Staging: `npm run deploy -- --env staging` (deploys to workers.dev subdomain for testing)
    - Production: `npm run deploy -- --env production` (deploys to massmurdercanada.org)
 
 ## Project Structure
@@ -106,13 +105,12 @@ The database uses the same schema as the original SQLite database:
 
 ## Environments
 
-The project has multiple deployment environments configured:
+The project has two deployment environments configured:
 
-- **staging**: Uses the original test database, deployed to `massmurdercanada-staging.darron.workers.dev`
-- **production-test**: Uses the production database, deployed to `massmurdercanada-prod-test.darron.workers.dev` (for testing before going live)
+- **staging**: Uses a separate database with a complete copy of production data, deployed to `massmurdercanada-staging.darron.workers.dev` (for testing changes before deploying to production)
 - **production**: Uses the production database, deployed to `massmurdercanada.org` and `www.massmurdercanada.org`
 
-All environments use Cloudflare D1 databases. See `wrangler.toml` for database configurations.
+All environments use Cloudflare D1 databases. The staging database is kept in sync with production data for realistic testing. See `wrangler.toml` for database configurations.
 
 ## Development
 
