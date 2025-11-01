@@ -1,0 +1,28 @@
+-- Records batch 4 of 4
+INSERT INTO records VALUES('d0bcb055-dabd-427d-a1fd-8b2e1b8a0e88','2023-01-01 00:00:00+00:00','Felix','Winnipeg','MB',0,4,4,1,0,'Unknown',1,0,'Firearms Prohibition, Bail, Known to Police',0,'');
+INSERT INTO records VALUES('2c26dc7a-fcf9-4a7f-b8a2-1896a6e9f3cb','2019-01-01 00:00:00+00:00','Dehdari','Calgary','AB',0,2,3,0,1,'Fire',0,0,'Domestic Violence',0,'');
+INSERT INTO records VALUES('11b23b31-90e1-4da1-8f56-d80950830735','2023-01-01 00:00:00+00:00','Unknown','Caledon','ON',NULL,2,2,1,0,'Firearms',1,NULL,'None, might be mistaken identity',NULL,'');
+INSERT INTO records VALUES('91236cfb-8cd6-4cfb-b3e0-9377dccf5c4d','2023-01-01 00:00:00+00:00','Unknown','Edmonton','AB',NULL,2,2,0,0,'Firearms',1,NULL,'Father was gang member',NULL,'');
+INSERT INTO records VALUES('9b68b10e-94b3-46c6-8a90-18fbef43c9e6','2023-01-01 00:00:00+00:00','Guillas','Estevan','SK',NULL,1,2,1,0,'Stabbed mother, shot cop with own weapon',0,NULL,'Criminal record',NULL,'');
+INSERT INTO records VALUES('461cb19b-7f59-4302-8b78-99f3f12f9e35','2023-01-01 00:00:00+00:00','Unknown','Ottawa','ON',0,2,2,6,0,'Firearm',1,0,'None',0,'');
+INSERT INTO records VALUES('81a1ebd7-e618-4d33-978a-44f99020b9cf','2024-01-01 00:00:00+00:00','Manoakeesick','Carman','MB',0,5,5,0,0,'Unknown',0,0,'Addiction, mental health, criminal record, impaired driving',0,'');
+INSERT INTO records VALUES('d48cf37d-c552-4cfd-a7e9-f156c4858cef','2006-01-01 00:00:00+00:00','Dagenais','Spiritwood','SK',NULL,2,2,1,NULL,'Wichester Rifle',1,NULL,'',NULL,'');
+INSERT INTO records VALUES('7b55f9bb-b915-4b8c-bd89-7a83818c253c','2024-01-01 00:00:00+00:00','Unknown','Richmond Hill','ON',NULL,2,2,0,NULL,'Unknown',NULL,NULL,'',NULL,'');
+INSERT INTO records VALUES('647717d6-6902-41e8-81c2-8a5a994a3a67','2023-01-01 00:00:00+00:00','Charlton','London','ON',NULL,1,2,0,1,'Firearm',NULL,NULL,'Family was worried',NULL,'');
+INSERT INTO records VALUES('42e3fd1f-6e22-4a93-b5d2-e77573c36a5f','2024-01-01 00:00:00+00:00','D’Souza','Ottawa','ON',0,6,6,1,0,'Edged weapon',0,0,'Unknown',0,'');
+INSERT INTO records VALUES('41a2d19e-cf87-4077-b760-25644893315c','2023-01-01 00:00:00+00:00','Ayo Aden Ezbon','Bowmanville','ON',0,0,2,0,0,'Firearms',1,0,'Known criminals with firearms prohibitions on probation',0,'');
+INSERT INTO records VALUES('b208ed37-2804-4ce6-9ecb-b19ef8421bcc','2024-01-01 00:00:00+00:00','Glover','McCreary','MB',0,3,4,1,1,'Firearms',1,0,'IPV, Breached conditions 5 times',0,'');
+INSERT INTO records VALUES('d8b2a585-9406-4450-ba3f-236d4e46b683','2024-01-01 00:00:00+00:00','Bilcke','Stratford','ON',1,1,2,2,1,'Rifle and shotgun',1,1,'Ongoing neighbor dispute',0,'');
+INSERT INTO records VALUES('20b7229b-76ae-4291-ab91-bc8341cfb468','2024-01-01 00:00:00+00:00','Unknown','Scarborough','ON',NULL,2,2,2,NULL,'Firearms',1,NULL,'Unknown',NULL,'');
+INSERT INTO records VALUES('1a2c1f78-38b6-4bd9-b0ac-af003493688c','2024-01-01 00:00:00+00:00','Walsh','Harrow','ON',NULL,3,4,0,1,'Shotgun?',1,NULL,'IPV',NULL,'');
+INSERT INTO records VALUES('edadafe8-9380-4bc2-959a-598a8f38607c','2024-01-01 00:00:00+00:00','Unknown','Etobicoke','ON',0,2,2,5,0,'Firearms',1,0,'Unknown, 14 year old suspect connected to criminal activity',0,'');
+INSERT INTO records VALUES('b12d3faf-bcb9-4869-9485-3e087f626010','2024-01-01 00:00:00+00:00','Duong','Vaughan','ON',0,2,2,2,0,'Firearms',1,0,'Drug dealer, previous violent record',0,'');
+INSERT INTO records VALUES('5134bd14-a813-4336-9be1-34e789e34e75','2024-01-01 00:00:00+00:00','Kats','North York','ON',0,2,3,0,1,'Firearms',1,0,'Revenge for mortgage fraud by long time white collar criminals',0,'');
+INSERT INTO records VALUES('797e7b8c-a43e-4863-bd00-2b8a112b2e9d','2024-01-01 00:00:00+00:00','Unknown','Montreal','QC',0,3,3,0,NULL,'Edge weapon',0,0,'Personal dispute',0,'');
+INSERT INTO records VALUES('3c75826f-97f8-40b1-a33f-dfcad20443f6','2024-01-01 00:00:00+00:00','Kongolo','Toronto','ON',0,2,2,1,0,'Firearm',1,0,'',0,'');
+INSERT INTO records VALUES('1de8e2da-fe49-4f8a-98fa-cd3043322446','2024-01-01 00:00:00+00:00','Massicotte','Richmond Hill','ON',0,2,3,0,1,'Edged weapon',0,0,'IPV',0,'');
+INSERT INTO records VALUES('842bdaec-78a2-4c9e-bc1c-7f028f19a6b5','2023-01-01 00:00:00+00:00','Collias','Scarborough','ON',0,2,2,1,0,'Unknown',0,0,'IPV',0,'');
+INSERT INTO records VALUES('4b16394b-8cbb-4fcd-9180-2abb902f0928','2024-01-01 00:00:00+00:00','Ayala','Etobicoke','ON',0,2,2,0,0,'Unknown',NULL,0,'Unknown',0,'');
+INSERT INTO records VALUES('e7edb59f-3d1c-4383-9a41-cd7ed6bce4a3','1941-01-01 00:00:00+00:00','Ouyerack','Belcher Islands','NT',0,9,9,0,0,'Exposure',0,0,'Thought he was Jesus',0,'');
+INSERT INTO records VALUES('7a03903a-6051-4df7-9fe8-8e7ab19d7d89','2025-01-01 00:00:00+00:00','Racette','Carry the Kettle Nakoda Nation','SK',NULL,4,4,0,0,'Firearm',1,NULL,'Unknown',NULL,'');
+INSERT INTO records VALUES('1f733160-8e3d-4648-ad89-ffc7c90753ff','2025-01-01 00:00:00+00:00','Lo','Vancouver','BC',NULL,11,11,26,0,'SUV',0,NULL,'Mental Health and Known to Police',NULL,'');
