@@ -41,3 +41,7 @@ binding = "DB"
 database_name = "massmurdercanada-prod"
 database_id = "abc87d82-e184-4c27-b971-f36fa4784a79"
 
+[[env.production.kv_namespaces]]
+binding = "AUTH_TOKENS"
+id = "d4b0879450f0411e9fd17a3dcdea4801"
+
