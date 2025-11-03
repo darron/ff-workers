@@ -4,4 +4,6 @@ dist/
 .DS_Store
 *.log
 .envrc
+# Local development secrets (automatically loaded by Wrangler)
+.dev.vars
 

@@ -9,7 +9,9 @@ This is the Cloudflare Workers version of the Mass Murder Canada application, co
 - Same URL structure as the original application
 - Modern, improved UI design
 - Cloudflare D1 database (SQLite-compatible)
-- All routes preserved:
+- **Admin Interface**: Secure admin dashboard for managing records and news stories
+- **REST API**: Full CRUD API for programmatic access
+- All public routes preserved:
   - `/` - Home page with all records
   - `/records/group/:group` - Filtered records by group
   - `/records/provinces/:province` - Filtered by province
@@ -17,51 +19,23 @@ This is the Cloudflare Workers version of the Mass Murder Canada application, co
 
 ## Setup
 
-### Prerequisites
+See **[docs/SETUP.md](./docs/SETUP.md)** for detailed setup instructions.
 
-- Node.js and npm installed
-- Cloudflare account
-- Wrangler CLI (installed via npm)
+Quick start:
+1. `npm install`
+2. Configure admin password (see [docs/ADMIN_SETUP.md](./docs/ADMIN_SETUP.md))
+3. `npm run dev` for local development
+4. `npx wrangler deploy --env staging` for staging deployment
 
-### Installation Steps
+## Documentation
 
-1. **Install dependencies:**
-   ```bash
-   cd /Users/darron/src/ff-workers
-   npm install
-   ```
+All documentation is in the **[docs/](./docs/)** folder:
 
-2. **Create a D1 database:**
-   ```bash
-   npx wrangler d1 create massmurdercanada
-   ```
-   This will output a database ID - copy it!
-
-3. **Update `wrangler.toml`:**
-   - Open `wrangler.toml`
-   - Replace `your-database-id-here` with the database ID from step 2
-
-4. **Run database migrations:**
-   ```bash
-   npm run migrate
-   ```
-   Or manually:
-   ```bash
-   npx wrangler d1 execute massmurdercanada --file=migrations/0001_initial.sql
-   ```
-
-5. **Migrate data:**
-   - To migrate from SQLite: Update `SQLITE_PATH` in `migrate-data.cjs`, run `node migrate-data.cjs`, then import the generated SQL files
-   - To migrate from a production database dump: Use `import-prod-dump.cjs` to process `database_dump.sql` and import the generated files
-
-6. **Test locally:**
-   ```bash
-   npm run dev
-   ```
-
-7. **Deploy to Cloudflare:**
-   - Staging: `npm run deploy -- --env staging` (deploys to workers.dev subdomain for testing)
-   - Production: `npm run deploy -- --env production` (deploys to massmurdercanada.org)
+- **[SETUP.md](./docs/SETUP.md)** - General setup and deployment guide
+- **[ADMIN_SETUP.md](./docs/ADMIN_SETUP.md)** - Admin interface setup and usage
+- **[SECURITY.md](./docs/SECURITY.md)** - Security documentation and best practices
+- **[NVM_GUIDE.md](./docs/NVM_GUIDE.md)** - Node.js version management
+- **[CHANGELOG.md](./docs/CHANGELOG.md)** - Recent changes and features
 
 ## Project Structure
 
