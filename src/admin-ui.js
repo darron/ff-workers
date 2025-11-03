@@ -612,10 +612,42 @@ export function renderAdminDashboard(records = [], stories = []) {
                     .then(r => r.json())
                     .then(record => {
                         document.getElementById('recordId').value = record.id || '';
-                        // Extract year from date if it's a full date, otherwise use as-is
-                        const dateValue = record.date || '';
-                        const yearMatch = dateValue.match(/^(\d{4})/);
-                        document.getElementById('recordDate').value = yearMatch ? yearMatch[1] : dateValue;
+                        // Extract year from date - handle various formats
+                        let yearValue = '';
+                        if (record.date != null && record.date !== '') {
+                            const dateStr = String(record.date).trim();
+                            
+                            // Extract first 4 digits from the string using substring (avoids regex escaping issues in template literals)
+                            // For formats like "2020-01-01 00:00:00+00:00" or "2020", extract first 4 chars if they're digits
+                            if (dateStr.length >= 4) {
+                                const firstFour = dateStr.substring(0, 4);
+                                // Check if first 4 characters are all digits
+                                if (/^[0-9]{4}$/.test(firstFour)) {
+                                    yearValue = firstFour;
+                                } else {
+                                    // If not, find first 4 consecutive digits in the string
+                                    let digits = '';
+                                    for (let i = 0; i < dateStr.length; i++) {
+                                        const char = dateStr[i];
+                                        if (char >= '0' && char <= '9') {
+                                            digits += char;
+                                            if (digits.length === 4) {
+                                                yearValue = digits;
+                                                break;
+                                            }
+                                        } else {
+                                            if (digits.length < 4) {
+                                                digits = '';
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (/^[0-9]{4}$/.test(dateStr)) {
+                                // If it's already just a 4-digit year
+                                yearValue = dateStr;
+                            }
+                        }
+                        document.getElementById('recordDate').value = yearValue || '';
                         document.getElementById('recordName').value = record.name || '';
                         document.getElementById('recordCity').value = record.city || '';
                         document.getElementById('recordProvince').value = record.province || '';
