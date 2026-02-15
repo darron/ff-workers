@@ -3,6 +3,11 @@
  */
 
 import { requireAuth, authenticate, destroySession } from './auth.js';
+import {
+  enqueueRecordSummary,
+  isAiSummaryEnabled,
+  isAutoAiSummaryEnabled
+} from './ai-summary.js';
 
 /**
  * Admin API routes handler
@@ -25,10 +30,11 @@ export async function handleAdminAPI(request, env, path, method) {
 
   const resource = segments[2]; // 'records' or 'stories'
   const id = segments[3]; // Optional ID
+  const action = segments[4]; // Optional action for resource routes
 
   try {
     if (resource === 'records') {
-      return await handleRecordsAPI(request, env, method, id);
+      return await handleRecordsAPI(request, env, method, id, action);
     } else if (resource === 'stories') {
       return await handleStoriesAPI(request, env, method, id);
     } else {
@@ -49,7 +55,7 @@ export async function handleAdminAPI(request, env, path, method) {
 /**
  * Handle records API endpoints
  */
-async function handleRecordsAPI(request, env, method, id) {
+async function handleRecordsAPI(request, env, method, id, action) {
   switch (method) {
     case 'GET':
       if (id) {
@@ -59,6 +65,9 @@ async function handleRecordsAPI(request, env, method, id) {
       }
     
     case 'POST':
+      if (id && action === 'summarize') {
+        return await triggerRecordSummary(env, id);
+      }
       return await createRecord(request, env);
     
     case 'PUT':
@@ -280,6 +289,14 @@ async function createRecord(request, env) {
         }
       }
     }
+
+    if (isAutoAiSummaryEnabled(env)) {
+      try {
+        await enqueueRecordSummary(env, body.id, 'record_created');
+      } catch (error) {
+        console.error('Failed to enqueue record summary after create:', error);
+      }
+    }
     
     return new Response(JSON.stringify({ 
       success: true, 
@@ -449,6 +466,14 @@ async function updateRecord(request, env, id) {
       }
     }
   }
+
+  if (isAutoAiSummaryEnabled(env)) {
+    try {
+      await enqueueRecordSummary(env, id, 'record_updated');
+    } catch (error) {
+      console.error('Failed to enqueue record summary after update:', error);
+    }
+  }
   
   return new Response(JSON.stringify({ 
     success: true, 
@@ -586,6 +611,14 @@ async function createStory(request, env) {
       body.body_text || null,
       body.ai_summary || null
     ).run();
+
+    if (isAutoAiSummaryEnabled(env)) {
+      try {
+        await enqueueRecordSummary(env, body.record_id, 'story_created');
+      } catch (queueError) {
+        console.error('Failed to enqueue record summary after story create:', queueError);
+      }
+    }
     
     return new Response(JSON.stringify({ 
       success: true, 
@@ -619,7 +652,7 @@ async function updateStory(request, env, id) {
   
   // Check if story exists
   const existing = await env.DB.prepare(
-    `SELECT id FROM news_stories WHERE id = ?`
+    `SELECT id, record_id FROM news_stories WHERE id = ?`
   ).bind(id).first();
   
   if (!existing) {
@@ -680,6 +713,19 @@ async function updateStory(request, env, id) {
   await env.DB.prepare(
     `UPDATE news_stories SET ${updates.join(', ')} WHERE id = ?`
   ).bind(...values).run();
+
+  if (isAutoAiSummaryEnabled(env)) {
+    try {
+      const targetRecordId = body.record_id || existing.record_id;
+      await enqueueRecordSummary(env, targetRecordId, 'story_updated');
+
+      if (body.record_id && body.record_id !== existing.record_id) {
+        await enqueueRecordSummary(env, existing.record_id, 'story_moved');
+      }
+    } catch (queueError) {
+      console.error('Failed to enqueue record summary after story update:', queueError);
+    }
+  }
   
   return new Response(JSON.stringify({ 
     success: true, 
@@ -718,3 +764,60 @@ async function deleteStory(env, id) {
   });
 }
 
+async function triggerRecordSummary(env, id) {
+  // Validate ID (allow UUIDs with dashes)
+  if (!/^[a-zA-Z0-9_-]+$/.test(id.replace(/-/g, ''))) {
+    return new Response(JSON.stringify({ error: 'Invalid record ID' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  if (!isAiSummaryEnabled(env)) {
+    return new Response(JSON.stringify({
+      error: 'AI summarization is disabled in this environment'
+    }), {
+      status: 412,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const record = await env.DB.prepare(
+    `SELECT id FROM records WHERE id = ?`
+  ).bind(id).first();
+
+  if (!record) {
+    return new Response(JSON.stringify({ error: 'Record not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  try {
+    const enqueueResult = await enqueueRecordSummary(env, id, 'manual_trigger');
+    if (!enqueueResult.queued) {
+      return new Response(JSON.stringify({
+        error: 'Summary queue is not configured in this environment'
+      }), {
+        status: 412,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      id,
+      message: 'Summary job queued'
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Failed to queue summary job:', error);
+    return new Response(JSON.stringify({
+      error: 'Failed to queue summary job'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}

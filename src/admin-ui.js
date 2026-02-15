@@ -201,6 +201,10 @@ export function renderAdminDashboard(records = [], stories = []) {
             background: #dc3545;
             color: white;
         }
+        .btn-ai {
+            background: #0d6efd;
+            color: white;
+        }
         .btn:hover {
             opacity: 0.8;
         }
@@ -370,6 +374,7 @@ export function renderAdminDashboard(records = [], stories = []) {
                         <td>${r.deaths || 0}</td>
                         <td class="actions">
                             <button class="btn btn-edit" onclick="editRecord('${escapeHtml(r.id)}')">Edit</button>
+                            <button class="btn btn-ai" onclick="generateRecordSummary('${escapeHtml(r.id)}')">Generate AI</button>
                             <button class="btn btn-delete" onclick="deleteRecord('${escapeHtml(r.id)}')">Delete</button>
                         </td>
                     </tr>
@@ -559,6 +564,7 @@ export function renderAdminDashboard(records = [], stories = []) {
                     <td>\${r.deaths || 0}</td>
                     <td class="actions">
                         <button class="btn btn-edit" onclick="editRecord('\${escapeHtml(r.id)}')">Edit</button>
+                        <button class="btn btn-ai" onclick="generateRecordSummary('\${escapeHtml(r.id)}')">Generate AI</button>
                         <button class="btn btn-delete" onclick="deleteRecord('\${escapeHtml(r.id)}')">Delete</button>
                     </td>
                 </tr>
@@ -811,6 +817,28 @@ export function renderAdminDashboard(records = [], stories = []) {
             }
         }
 
+        async function generateRecordSummary(id) {
+            if (!id) {
+                showAlert('Record ID is required to generate AI summary', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(\`/admin/api/records/\${id}/summarize\`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (response.ok) {
+                    showAlert('Summary job queued. Refresh in a few seconds to view results.');
+                } else {
+                    showAlert('Error: ' + (result.error || 'Failed to queue summary job'), 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
         // Story modal functions
         function openStoryModal(storyId = null) {
             const modal = document.getElementById('storyModal');
@@ -1003,4 +1031,3 @@ export function renderAdminDashboard(records = [], stories = []) {
 </body>
 </html>`;
 }
-

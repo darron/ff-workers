@@ -19,6 +19,14 @@ name = "massmurdercanada-staging"
 # Note: ADMIN_PASSWORD_HASH should be set as a secret for staging:
 # npx wrangler secret put ADMIN_PASSWORD_HASH --env staging
 
+[env.staging.vars]
+AI_SUMMARY_ENABLED = "true"
+AI_SUMMARY_AUTO_ON_SAVE = "false"
+AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+AI_FETCH_JINA_FALLBACK = "true"
+AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"
+AI_FETCH_SUMMARIZE_DAEMON_URL = ""
+
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "massmurdercanada"
@@ -27,6 +35,19 @@ database_id = "2096de9d-42d1-4430-bd6f-92ff79419f4e"
 [[env.staging.kv_namespaces]]
 binding = "AUTH_TOKENS"
 id = "59d5407bc78348d9a620f9bb5cf2ed87"
+
+[env.staging.ai]
+binding = "AI"
+
+[[env.staging.queues.producers]]
+binding = "SUMMARY_QUEUE"
+queue = "massmurdercanada-staging-summary"
+
+[[env.staging.queues.consumers]]
+queue = "massmurdercanada-staging-summary"
+max_batch_size = 5
+max_batch_timeout = 10
+max_retries = 3
 
 # Production
 [env.production]
@@ -45,3 +66,9 @@ database_id = "abc87d82-e184-4c27-b971-f36fa4784a79"
 binding = "AUTH_TOKENS"
 id = "d4b0879450f0411e9fd17a3dcdea4801"
 
+[env.production.vars]
+AI_SUMMARY_ENABLED = "false"
+AI_SUMMARY_AUTO_ON_SAVE = "false"
+AI_FETCH_JINA_FALLBACK = "false"
+AI_FETCH_MARKDOWN_NEW_FALLBACK = "false"
+AI_FETCH_SUMMARIZE_DAEMON_URL = ""
