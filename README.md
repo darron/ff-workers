@@ -11,6 +11,10 @@ This is the Cloudflare Workers version of the Mass Murder Canada application, co
 - Cloudflare D1 database (SQLite-compatible)
 - **Admin Interface**: Secure admin dashboard for managing records and news stories
 - **REST API**: Full CRUD API for programmatic access
+- **Asynchronous AI synthesis pipeline (staging-ready)**:
+  - per-story summaries
+  - record-level synthesis across all linked sources
+  - source classification (`news`, `official`, `social`, `other`) with social-only incidents flagged as `alleged`
 - All public routes preserved:
   - `/` - Home page with all records
   - `/records/group/:group` - Filtered records by group
@@ -89,6 +93,44 @@ All environments use Cloudflare D1 databases. The staging database is kept in sy
 ## Development
 
 The worker uses Cloudflare Workers with D1 database. Local development uses `wrangler dev` which provides a local D1 database for testing.
+
+## AI Summaries (Staging)
+
+Staging is configured for **manual** AI generation to avoid unnecessary token usage:
+
+- `AI_SUMMARY_ENABLED = "true"`
+- `AI_SUMMARY_AUTO_ON_SAVE = "false"`
+- `AI_FETCH_JINA_FALLBACK = "true"`
+- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
+- `AI_FETCH_SUMMARIZE_DAEMON_URL = ""` (optional, if you run summarize daemon)
+- Queue binding: `SUMMARY_QUEUE`
+- AI binding: `AI`
+
+From the admin dashboard, use the `Generate AI` button on a record row. This enqueues:
+
+- per-story summarization for all linked sources
+- one synthesized summary written to `records.ai_summary`
+
+Extraction order for linked stories:
+
+1. Stored `body_text` (if available)
+2. Direct fetch with structured extraction (JSON-LD `articleBody`, meta descriptions, `<article>/<main>` blocks)
+3. Optional summarize daemon fallback (`/v1/summarize` + events stream) when configured
+4. Optional fallback readers (`r.jina.ai`, `markdown.new`) when direct extraction is weak
+
+RCMP URLs are normalized from `rcmp-grc.gc.ca` to `rcmp.ca` before fetching to improve hit rate.
+Unsafe source URLs are skipped (only public `http/https` URLs are fetched; localhost/private IP/local hostnames are blocked).
+
+If using summarize daemon with auth, set a secret token:
+
+`npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env staging`
+
+### Queue Setup
+
+Before deploying staging with AI summaries, create the queue once:
+
+1. `npx wrangler queues create massmurdercanada-staging-summary`
+2. `npx wrangler deploy --env staging`
 
 ## Notes
 

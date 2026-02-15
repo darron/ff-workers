@@ -7,6 +7,7 @@ import { renderHomePage, renderRecordPage } from './templates.js';
 import { handleAdminAPI } from './admin.js';
 import { authenticate, destroySession, isAuthenticated, setSessionCookie, clearSessionCookie } from './auth.js';
 import { renderLoginPage, renderAdminDashboard } from './admin-ui.js';
+import { processSummaryQueue } from './ai-summary.js';
 
 /**
  * Validate and sanitize path segments to prevent path traversal
@@ -113,6 +114,10 @@ export default {
       // Don't expose internal error details to users
       return new Response('An error occurred', { status: 500 });
     }
+  },
+
+  async queue(batch, env, ctx) {
+    await processSummaryQueue(batch, env);
   }
 };
 
@@ -216,4 +221,3 @@ async function handleAdminRoutes(request, env, path, method) {
 
   return new Response('Admin page not found', { status: 404 });
 }
-

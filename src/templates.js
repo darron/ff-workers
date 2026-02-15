@@ -2,6 +2,12 @@
  * HTML Template functions
  */
 
+import {
+  classifySourceType,
+  getRecordCredibility,
+  getSourceTypeLabel
+} from './source-classification.js';
+
 export function renderHomePage(records, currentPath = '/') {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -228,6 +234,8 @@ export function renderRecordPage(record, currentPath = '/') {
   if (!record) {
     return '<html><body><h1>Record not found</h1></body></html>';
   }
+  const newsStories = record.newsStories || [];
+  const credibility = getRecordCredibility(newsStories);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -331,6 +339,29 @@ export function renderRecordPage(record, currentPath = '/') {
             border-left: 4px solid #003366;
             border-radius: 4px;
         }
+        .news-story-meta {
+            margin-top: 8px;
+        }
+        .source-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            font-size: 0.8em;
+            font-weight: 600;
+            border-radius: 999px;
+            margin-right: 8px;
+        }
+        .source-news, .source-official {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        .source-social {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .source-other {
+            background: #e2e3e5;
+            color: #383d41;
+        }
         .news-story a {
             color: #003366;
             font-weight: 600;
@@ -339,6 +370,45 @@ export function renderRecordPage(record, currentPath = '/') {
         .news-story-text {
             margin-top: 10px;
             color: #555;
+        }
+        .ai-summary-box {
+            margin: 20px 0;
+            padding: 16px;
+            background: #eef6ff;
+            border-left: 4px solid #0b5ed7;
+            border-radius: 4px;
+        }
+        .ai-summary-box h4 {
+            margin: 0 0 8px 0;
+            color: #003366;
+        }
+        .ai-summary-text {
+            color: #1f2937;
+        }
+        .ai-summary-text p {
+            margin: 10px 0;
+        }
+        .ai-summary-text ul, .ai-summary-text ol {
+            margin: 10px 0 10px 22px;
+        }
+        .ai-summary-text li {
+            margin: 4px 0;
+        }
+        .ai-summary-text h4 {
+            margin: 14px 0 8px 0;
+            color: #0b3b73;
+            font-size: 1em;
+        }
+        .credibility-note {
+            margin: 18px 0;
+            padding: 12px;
+            border-left: 4px solid #6c757d;
+            background: #f1f3f5;
+            border-radius: 4px;
+        }
+        .credibility-note.alleged {
+            border-left-color: #dc3545;
+            background: #fff5f5;
         }
         a {
             color: #003366;
@@ -405,11 +475,26 @@ export function renderRecordPage(record, currentPath = '/') {
         
         ${record.warnings ? `<h3>Warnings</h3><p>${escapeHtml(record.warnings)}</p>` : ''}
 
-        ${record.newsStories && record.newsStories.length > 0 ? `
+        ${record.ai_summary ? `
+        <h3>AI Synthesis</h3>
+        <div class="ai-summary-box">
+            <h4>Generated summary</h4>
+            <div class="ai-summary-text">${renderMarkdown(record.ai_summary || '')}</div>
+        </div>
+        ` : ''}
+
+        ${newsStories.length > 0 ? `
+        <div class="credibility-note ${credibility.socialOnly ? 'alleged' : ''}">
+            ${escapeHtml(formatCredibilitySummary(credibility))}
+        </div>
         <h3>News Stories</h3>
-        ${record.newsStories.map(story => `
+        ${newsStories.map(story => `
         <div class="news-story">
+            <div class="news-story-meta">
+              ${renderSourceBadge(story.url)}
+            </div>
             <div><a href="${escapeHtml(story.url || '#')}" target="_blank" rel="noopener noreferrer">${escapeHtml(story.url || '')}</a></div>
+            ${story.ai_summary ? `<div class="news-story-text ai-summary-text">${renderMarkdown(story.ai_summary || '')}</div>` : ''}
         </div>
         `).join('')}
         ` : ''}
@@ -488,6 +573,119 @@ function formatNullableBool(value) {
   return value === 1 ? 'Yes' : 'No';
 }
 
+function renderSourceBadge(url) {
+  const sourceType = classifySourceType(url || '');
+  const label = getSourceTypeLabel(sourceType);
+  return `<span class="source-badge source-${escapeHtml(sourceType)}">${escapeHtml(label)}</span>`;
+}
+
+function formatCredibilitySummary(credibility) {
+  if (credibility.socialOnly) {
+    return `Status: Alleged (social-source-only). No independent news/official sources linked yet.`;
+  }
+
+  if (credibility.classification === 'corroborated') {
+    return `Status: Corroborated across multiple credible sources. Credible: ${credibility.credible}, Social: ${credibility.social}, Other: ${credibility.other}.`;
+  }
+
+  if (credibility.classification === 'reported') {
+    return `Status: Reported by at least one credible source. Credible: ${credibility.credible}, Social: ${credibility.social}, Other: ${credibility.other}.`;
+  }
+
+  return `Status: Unverified. Credible: ${credibility.credible}, Social: ${credibility.social}, Other: ${credibility.other}.`;
+}
+
+function renderMarkdown(markdownText) {
+  const normalized = String(markdownText || '').replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return '';
+
+  const lines = normalized.split('\n');
+  const html = [];
+  let paragraph = [];
+  let inUl = false;
+  let inOl = false;
+
+  const closeLists = () => {
+    if (inUl) {
+      html.push('</ul>');
+      inUl = false;
+    }
+    if (inOl) {
+      html.push('</ol>');
+      inOl = false;
+    }
+  };
+
+  const flushParagraph = () => {
+    if (paragraph.length > 0) {
+      html.push(`<p>${paragraph.join('<br>')}</p>`);
+      paragraph = [];
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      flushParagraph();
+      closeLists();
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      closeLists();
+      const level = Math.min(4, headingMatch[1].length);
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const ulMatch = line.match(/^[-*]\s+(.*)$/);
+    if (ulMatch) {
+      flushParagraph();
+      if (inOl) {
+        html.push('</ol>');
+        inOl = false;
+      }
+      if (!inUl) {
+        html.push('<ul>');
+        inUl = true;
+      }
+      html.push(`<li>${renderInlineMarkdown(ulMatch[1])}</li>`);
+      continue;
+    }
+
+    const olMatch = line.match(/^\d+\.\s+(.*)$/);
+    if (olMatch) {
+      flushParagraph();
+      if (inUl) {
+        html.push('</ul>');
+        inUl = false;
+      }
+      if (!inOl) {
+        html.push('<ol>');
+        inOl = true;
+      }
+      html.push(`<li>${renderInlineMarkdown(olMatch[1])}</li>`);
+      continue;
+    }
+
+    closeLists();
+    paragraph.push(renderInlineMarkdown(line));
+  }
+
+  flushParagraph();
+  closeLists();
+  return html.join('\n');
+}
+
+function renderInlineMarkdown(text) {
+  return escapeHtml(text || '')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+}
+
 function escapeHtml(text) {
   if (!text) return '';
   const map = {
@@ -499,4 +697,3 @@ function escapeHtml(text) {
   };
   return String(text).replace(/[&<>"']/g, m => map[m]);
 }
-
