@@ -104,6 +104,33 @@ async function enqueueRecordSummaryWithWarning(env, recordId, reason, context) {
   }
 }
 
+function parseBooleanFlag(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+function parseNumberInRange(value, defaultValue, min, max) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed)) return defaultValue;
+  if (parsed < min) return min;
+  if (parsed > max) return max;
+  return parsed;
+}
+
+async function readJsonBodySafe(request) {
+  try {
+    const raw = await request.text();
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Admin API routes handler
  */
@@ -160,6 +187,9 @@ async function handleRecordsAPI(request, env, method, id, action) {
       }
     
     case 'POST':
+      if (id === 'summarize-all') {
+        return await triggerBulkRecordSummary(request, env);
+      }
       if (id && action === 'summarize') {
         return await triggerRecordSummary(env, id);
       }
@@ -951,4 +981,116 @@ async function triggerRecordSummary(env, id) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+async function triggerBulkRecordSummary(request, env) {
+  if (!isAiSummaryEnabled(env)) {
+    return new Response(JSON.stringify({
+      error: 'AI summarization is disabled in this environment'
+    }), {
+      status: 412,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  if (!env?.SUMMARY_QUEUE) {
+    return new Response(JSON.stringify({
+      error: 'Summary queue is not configured in this environment'
+    }), {
+      status: 412,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const body = await readJsonBodySafe(request);
+  const requestUrl = new URL(request.url);
+  const searchParams = requestUrl.searchParams;
+
+  const limit = parseNumberInRange(
+    body.limit ?? searchParams.get('limit'),
+    25,
+    1,
+    100
+  );
+  const offset = parseNumberInRange(
+    body.offset ?? searchParams.get('offset'),
+    0,
+    0,
+    1000000
+  );
+  const onlyMissing = parseBooleanFlag(
+    body.only_missing ?? body.onlyMissing ?? searchParams.get('only_missing'),
+    true
+  );
+  const includeFallback = parseBooleanFlag(
+    body.include_fallback ?? body.includeFallback ?? searchParams.get('include_fallback'),
+    true
+  );
+
+  const predicates = [];
+  if (onlyMissing) {
+    predicates.push(`ai_summary IS NULL`);
+    predicates.push(`TRIM(ai_summary) = ''`);
+    if (includeFallback) {
+      predicates.push(`ai_summary LIKE '%Automated fallback summary for%'`);
+    }
+  }
+
+  const whereClause = predicates.length > 0
+    ? `WHERE (${predicates.join(' OR ')})`
+    : '';
+
+  const eligibleResult = await env.DB.prepare(
+    `SELECT COUNT(*) AS total
+     FROM records
+     ${whereClause}`
+  ).first();
+  const eligibleCount = Number.parseInt(String(eligibleResult?.total || 0), 10) || 0;
+
+  const recordsResult = await env.DB.prepare(
+    `SELECT id
+     FROM records
+     ${whereClause}
+     ORDER BY date DESC, id
+     LIMIT ?
+     OFFSET ?`
+  ).bind(limit, offset).all();
+
+  const records = recordsResult.results || [];
+  let queuedCount = 0;
+  let skippedCount = 0;
+
+  for (const record of records) {
+    const enqueueResult = await enqueueRecordSummary(env, record.id, 'bulk_backfill', {
+      offset: 0
+    });
+    if (enqueueResult?.queued) {
+      queuedCount += 1;
+    } else {
+      skippedCount += 1;
+      console.warn(
+        `AI summary enqueue skipped (bulk_backfill): record=${record.id}, reason=${enqueueResult?.reason || 'unknown'}`
+      );
+    }
+  }
+
+  const selectedCount = records.length;
+  const nextOffset = offset + selectedCount;
+  const hasMore = nextOffset < eligibleCount;
+
+  return new Response(JSON.stringify({
+    success: true,
+    onlyMissing,
+    includeFallback,
+    limit,
+    offset,
+    eligibleCount,
+    selectedCount,
+    queuedCount,
+    skippedCount,
+    hasMore,
+    nextOffset: hasMore ? nextOffset : null
+  }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
