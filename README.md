@@ -100,6 +100,7 @@ Staging is configured for **manual** AI generation to avoid unnecessary token us
 
 - `AI_SUMMARY_ENABLED = "true"`
 - `AI_SUMMARY_AUTO_ON_SAVE = "false"`
+- `AI_SUMMARY_STORIES_PER_JOB = "10"` (process large records in chunks)
 - `AI_FETCH_JINA_FALLBACK = "true"`
 - `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
 - `AI_FETCH_SUMMARIZE_DAEMON_URL = ""` (optional, if you run summarize daemon)
@@ -120,6 +121,7 @@ Extraction order for linked stories:
 
 RCMP URLs are normalized from `rcmp-grc.gc.ca` to `rcmp.ca` before fetching to improve hit rate.
 Unsafe source URLs are skipped (only public `http/https` URLs are fetched; localhost/private IP/local hostnames are blocked).
+Large records are processed over multiple queue jobs; final synthesis runs on the last chunk.
 
 If using summarize daemon with auth, set a secret token:
 
