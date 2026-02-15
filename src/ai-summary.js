@@ -5,6 +5,8 @@ const MAX_STORY_TEXT_CHARS = 14000;
 const MAX_STORY_SUMMARY_CHARS = 900;
 const MAX_STORIES_FOR_SYNTHESIS = 30;
 const MIN_EXTRACTED_TEXT_CHARS = 320;
+const DEFAULT_STORIES_PER_JOB = 10;
+const MAX_STORIES_PER_JOB = 25;
 const NO_TEXT_SUMMARY = 'No article text available for reliable summarization.';
 const SOCIAL_ONLY_SUMMARY = 'Social-media source only. Treat this as alleged until corroborated by independent reporting.';
 const UNSAFE_URL_SUMMARY = 'Source URL blocked by safety policy (must be public http/https).';
@@ -38,16 +40,41 @@ function isSummarizeDaemonFallbackEnabled(env) {
   return !!getSummarizeDaemonUrl(env);
 }
 
-export async function enqueueRecordSummary(env, recordId, reason = 'record_updated') {
+function getStoriesPerJob(env, payload = {}) {
+  const payloadValue = Number.parseInt(String(payload?.storiesPerJob ?? ''), 10);
+  if (Number.isInteger(payloadValue) && payloadValue > 0) {
+    return Math.min(payloadValue, MAX_STORIES_PER_JOB);
+  }
+
+  const envValue = Number.parseInt(String(env?.AI_SUMMARY_STORIES_PER_JOB || ''), 10);
+  if (Number.isInteger(envValue) && envValue > 0) {
+    return Math.min(envValue, MAX_STORIES_PER_JOB);
+  }
+
+  return DEFAULT_STORIES_PER_JOB;
+}
+
+function parseOffset(rawOffset) {
+  const value = Number.parseInt(String(rawOffset ?? '0'), 10);
+  if (!Number.isInteger(value) || value < 0) {
+    return 0;
+  }
+  return value;
+}
+
+export async function enqueueRecordSummary(env, recordId, reason = 'record_updated', extraPayload = {}) {
   if (!env?.SUMMARY_QUEUE || !recordId) {
     return { queued: false, reason: 'queue_not_configured' };
   }
 
-  await env.SUMMARY_QUEUE.send({
+  const messagePayload = {
     recordId,
     reason,
-    requestedAt: new Date().toISOString()
-  });
+    requestedAt: new Date().toISOString(),
+    ...extraPayload
+  };
+
+  await env.SUMMARY_QUEUE.send(messagePayload);
 
   return { queued: true };
 }
@@ -62,7 +89,27 @@ export async function processSummaryQueue(batch, env) {
         continue;
       }
 
-      await summarizeRecord(recordId, env);
+      const offset = parseOffset(payload.offset);
+      const storiesPerJob = getStoriesPerJob(env, payload);
+      const nextChunk = await summarizeRecordChunk(recordId, env, { offset, storiesPerJob });
+
+      if (nextChunk.hasMore) {
+        const enqueueResult = await enqueueRecordSummary(
+          env,
+          recordId,
+          payload.reason || 'record_updated',
+          {
+            offset: nextChunk.nextOffset,
+            storiesPerJob,
+            requestedAt: payload.requestedAt || new Date().toISOString()
+          }
+        );
+
+        if (!enqueueResult.queued) {
+          throw new Error(`Failed to enqueue continuation chunk for record ${recordId}: ${enqueueResult.reason || 'unknown'}`);
+        }
+      }
+
       message.ack();
     } catch (error) {
       console.error('Failed to process summary message:', error);
@@ -71,7 +118,7 @@ export async function processSummaryQueue(batch, env) {
   }
 }
 
-async function summarizeRecord(recordId, env) {
+async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob = DEFAULT_STORIES_PER_JOB } = {}) {
   if (!env?.DB) {
     throw new Error('DB binding missing');
   }
@@ -83,20 +130,37 @@ async function summarizeRecord(recordId, env) {
   ).bind(recordId).first();
 
   if (!record) {
-    return;
+    return { hasMore: false };
   }
+
+  const countResult = await env.DB.prepare(
+    `SELECT COUNT(*) AS total
+     FROM news_stories
+     WHERE record_id = ?`
+  ).bind(recordId).first();
+  const totalStories = Number.parseInt(String(countResult?.total || 0), 10) || 0;
 
   const storiesResult = await env.DB.prepare(
     `SELECT id, url, body_text, ai_summary
      FROM news_stories
      WHERE record_id = ?
-     ORDER BY id`
-  ).bind(recordId).all();
+     ORDER BY id
+     LIMIT ?
+     OFFSET ?`
+  ).bind(recordId, storiesPerJob, offset).all();
 
   const stories = storiesResult.results || [];
 
   for (const story of stories) {
     await refreshStorySummaryIfNeeded(env, story);
+  }
+
+  const nextOffset = offset + stories.length;
+  if (totalStories > 0 && nextOffset < totalStories) {
+    return {
+      hasMore: true,
+      nextOffset
+    };
   }
 
   const refreshedResult = await env.DB.prepare(
@@ -112,6 +176,8 @@ async function summarizeRecord(recordId, env) {
   await env.DB.prepare(
     `UPDATE records SET ai_summary = ? WHERE id = ?`
   ).bind(recordSummary, recordId).run();
+
+  return { hasMore: false };
 }
 
 async function refreshStorySummaryIfNeeded(env, story) {
@@ -195,9 +261,7 @@ async function buildRecordSummary(env, record, stories) {
     };
   });
 
-  const orderedRows = sourceRows
-    .sort((a, b) => scoreSourceType(b.sourceType) - scoreSourceType(a.sourceType))
-    .slice(0, MAX_STORIES_FOR_SYNTHESIS);
+  const orderedRows = selectSourcesForSynthesis(sourceRows, MAX_STORIES_FOR_SYNTHESIS);
 
   const omittedCount = sourceRows.length - orderedRows.length;
 
@@ -278,6 +342,39 @@ function scoreSourceType(sourceType) {
     default:
       return 0;
   }
+}
+
+function selectSourcesForSynthesis(sourceRows, maxSources) {
+  if (!Array.isArray(sourceRows) || sourceRows.length === 0) {
+    return [];
+  }
+
+  const sorted = [...sourceRows].sort((a, b) => scoreSourceType(b.sourceType) - scoreSourceType(a.sourceType));
+  const credibleRows = sorted.filter(row => row.sourceType === 'official' || row.sourceType === 'news');
+  const otherRows = sorted.filter(row => row.sourceType === 'other');
+  const socialRows = sorted.filter(row => row.sourceType === 'social');
+
+  // If we only have social links, include as many as possible.
+  if (credibleRows.length === 0 && otherRows.length === 0) {
+    return socialRows.slice(0, maxSources);
+  }
+
+  // Primary budget goes to credible + other sources.
+  const primaryRows = [...credibleRows, ...otherRows].slice(0, maxSources);
+  let remaining = maxSources - primaryRows.length;
+  if (remaining <= 0) {
+    return primaryRows;
+  }
+
+  // Social sources are supplemental unless they are all we have.
+  // Keep a small cap so high-volume social links do not crowd out higher-signal sources.
+  const socialCap = credibleRows.length > 0 ? 2 : 4;
+  const socialToInclude = Math.min(remaining, socialCap, socialRows.length);
+  if (socialToInclude <= 0) {
+    return primaryRows;
+  }
+
+  return [...primaryRows, ...socialRows.slice(0, socialToInclude)];
 }
 
 async function runAiText(env, prompt, maxTokens = 500) {
