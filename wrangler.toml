@@ -66,9 +66,22 @@ database_id = "abc87d82-e184-4c27-b971-f36fa4784a79"
 binding = "AUTH_TOKENS"
 id = "d4b0879450f0411e9fd17a3dcdea4801"
 
+[env.production.ai]
+binding = "AI"
+
+[[env.production.queues.producers]]
+binding = "SUMMARY_QUEUE"
+queue = "massmurdercanada-production-summary"
+
+[[env.production.queues.consumers]]
+queue = "massmurdercanada-production-summary"
+max_batch_size = 5
+max_batch_timeout = 10
+max_retries = 3
+
 [env.production.vars]
-AI_SUMMARY_ENABLED = "false"
+AI_SUMMARY_ENABLED = "true"
 AI_SUMMARY_AUTO_ON_SAVE = "false"
-AI_FETCH_JINA_FALLBACK = "false"
-AI_FETCH_MARKDOWN_NEW_FALLBACK = "false"
+AI_FETCH_JINA_FALLBACK = "true"
+AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"
 AI_FETCH_SUMMARIZE_DAEMON_URL = ""
