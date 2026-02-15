@@ -9,6 +9,101 @@ import {
   isAutoAiSummaryEnabled
 } from './ai-summary.js';
 
+function validateAndNormalizePublicHttpUrl(rawUrl) {
+  if (!rawUrl) {
+    return { ok: true, url: '' };
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      return { ok: false, error: 'URL must use http or https' };
+    }
+
+    if (parsed.username || parsed.password) {
+      return { ok: false, error: 'URL must not include credentials' };
+    }
+
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    if (!hostname) {
+      return { ok: false, error: 'URL host is required' };
+    }
+
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local')
+    ) {
+      return { ok: false, error: 'Local hostnames are not allowed' };
+    }
+
+    if (isPrivateOrLocalIp(hostname)) {
+      return { ok: false, error: 'Private/local IP ranges are not allowed' };
+    }
+
+    parsed.hostname = hostname;
+    return { ok: true, url: parsed.toString() };
+  } catch {
+    return { ok: false, error: 'Invalid URL format' };
+  }
+}
+
+function isPrivateOrLocalIp(hostname) {
+  return isPrivateIpv4(hostname) || isPrivateIpv6(hostname);
+}
+
+function isPrivateIpv4(hostname) {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  const octets = parts.map(p => Number.parseInt(p, 10));
+  if (octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) {
+    return false;
+  }
+
+  const [a, b, c] = octets;
+  if (a === 10 || a === 127 || a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a >= 224) return true;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+
+  return false;
+}
+
+function isPrivateIpv6(hostname) {
+  if (!hostname.includes(':')) {
+    return false;
+  }
+
+  const normalized = hostname.toLowerCase().split('%')[0];
+  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+
+  return (
+    normalized.startsWith('fe8') ||
+    normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') ||
+    normalized.startsWith('feb')
+  );
+}
+
+async function enqueueRecordSummaryWithWarning(env, recordId, reason, context) {
+  const result = await enqueueRecordSummary(env, recordId, reason);
+  if (!result?.queued) {
+    console.warn(
+      `AI summary enqueue skipped (${context}): record=${recordId}, reason=${result?.reason || 'unknown'}`
+    );
+  }
+}
+
 /**
  * Admin API routes handler
  */
@@ -219,6 +314,28 @@ async function createRecord(request, env) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+
+  if (body.newsStories && Array.isArray(body.newsStories)) {
+    // Limit number of stories to prevent DoS
+    if (body.newsStories.length > 100) {
+      return new Response(JSON.stringify({ error: 'Too many news stories (maximum 100)' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    for (const story of body.newsStories) {
+      if (!story?.url) continue;
+      const validated = validateAndNormalizePublicHttpUrl(story.url);
+      if (!validated.ok) {
+        return new Response(JSON.stringify({ error: `Invalid or unsafe story URL: ${validated.error}` }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      story.url = validated.url;
+    }
+  }
   
   try {
     const result = await env.DB.prepare(
@@ -247,26 +364,11 @@ async function createRecord(request, env) {
     
     // Handle news stories if provided
     if (body.newsStories && Array.isArray(body.newsStories)) {
-      // Limit number of stories to prevent DoS
-      if (body.newsStories.length > 100) {
-        return new Response(JSON.stringify({ error: 'Too many news stories (maximum 100)' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-      
       for (const story of body.newsStories) {
         if (story.id && story.url) {
           // Validate story ID format (allow UUIDs with dashes)
           if (!/^[a-zA-Z0-9_-]+$/.test(story.id.replace(/-/g, ''))) {
             continue; // Skip invalid story IDs
-          }
-          
-          // Validate URL format
-          try {
-            new URL(story.url);
-          } catch {
-            continue; // Skip invalid URLs
           }
           
           try {
@@ -292,7 +394,7 @@ async function createRecord(request, env) {
 
     if (isAutoAiSummaryEnabled(env)) {
       try {
-        await enqueueRecordSummary(env, body.id, 'record_created');
+        await enqueueRecordSummaryWithWarning(env, body.id, 'record_created', 'record_create');
       } catch (error) {
         console.error('Failed to enqueue record summary after create:', error);
       }
@@ -355,6 +457,28 @@ async function updateRecord(request, env, id) {
       });
     }
   }
+
+  if (body.newsStories !== undefined && Array.isArray(body.newsStories)) {
+    // Limit number of stories to prevent DoS
+    if (body.newsStories.length > 100) {
+      return new Response(JSON.stringify({ error: 'Too many news stories (maximum 100)' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    for (const story of body.newsStories) {
+      if (!story?.url) continue;
+      const validated = validateAndNormalizePublicHttpUrl(story.url);
+      if (!validated.ok) {
+        return new Response(JSON.stringify({ error: `Invalid or unsafe story URL: ${validated.error}` }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      story.url = validated.url;
+    }
+  }
   
   const fields = {
     date: body.date,
@@ -413,26 +537,11 @@ async function updateRecord(request, env, id) {
     }
     
     // Add or update stories
-    // Limit number of stories to prevent DoS
-    if (body.newsStories.length > 100) {
-      return new Response(JSON.stringify({ error: 'Too many news stories (maximum 100)' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
     for (const story of body.newsStories) {
       if (story.id && story.url) {
         // Validate story ID format (allow UUIDs with dashes)
         if (!/^[a-zA-Z0-9_-]+$/.test(story.id.replace(/-/g, ''))) {
           continue; // Skip invalid story IDs
-        }
-        
-        // Validate URL format
-        try {
-          new URL(story.url);
-        } catch {
-          continue; // Skip invalid URLs
         }
         
         // Check if story exists
@@ -469,7 +578,7 @@ async function updateRecord(request, env, id) {
 
   if (isAutoAiSummaryEnabled(env)) {
     try {
-      await enqueueRecordSummary(env, id, 'record_updated');
+      await enqueueRecordSummaryWithWarning(env, id, 'record_updated', 'record_update');
     } catch (error) {
       console.error('Failed to enqueue record summary after update:', error);
     }
@@ -599,6 +708,17 @@ async function createStory(request, env) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+
+  if (body.url) {
+    const validated = validateAndNormalizePublicHttpUrl(body.url);
+    if (!validated.ok) {
+      return new Response(JSON.stringify({ error: `Invalid or unsafe URL: ${validated.error}` }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    body.url = validated.url;
+  }
   
   try {
     await env.DB.prepare(
@@ -614,7 +734,7 @@ async function createStory(request, env) {
 
     if (isAutoAiSummaryEnabled(env)) {
       try {
-        await enqueueRecordSummary(env, body.record_id, 'story_created');
+        await enqueueRecordSummaryWithWarning(env, body.record_id, 'story_created', 'story_create');
       } catch (queueError) {
         console.error('Failed to enqueue record summary after story create:', queueError);
       }
@@ -649,6 +769,17 @@ async function updateStory(request, env, id) {
   }
   
   const body = await request.json();
+
+  if (body.url !== undefined && body.url !== null && body.url !== '') {
+    const validated = validateAndNormalizePublicHttpUrl(body.url);
+    if (!validated.ok) {
+      return new Response(JSON.stringify({ error: `Invalid or unsafe URL: ${validated.error}` }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    body.url = validated.url;
+  }
   
   // Check if story exists
   const existing = await env.DB.prepare(
@@ -717,10 +848,10 @@ async function updateStory(request, env, id) {
   if (isAutoAiSummaryEnabled(env)) {
     try {
       const targetRecordId = body.record_id || existing.record_id;
-      await enqueueRecordSummary(env, targetRecordId, 'story_updated');
+      await enqueueRecordSummaryWithWarning(env, targetRecordId, 'story_updated', 'story_update');
 
       if (body.record_id && body.record_id !== existing.record_id) {
-        await enqueueRecordSummary(env, existing.record_id, 'story_moved');
+        await enqueueRecordSummaryWithWarning(env, existing.record_id, 'story_moved', 'story_move');
       }
     } catch (queueError) {
       console.error('Failed to enqueue record summary after story update:', queueError);

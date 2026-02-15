@@ -119,6 +119,7 @@ Extraction order for linked stories:
 4. Optional fallback readers (`r.jina.ai`, `markdown.new`) when direct extraction is weak
 
 RCMP URLs are normalized from `rcmp-grc.gc.ca` to `rcmp.ca` before fetching to improve hit rate.
+Unsafe source URLs are skipped (only public `http/https` URLs are fetched; localhost/private IP/local hostnames are blocked).
 
 If using summarize daemon with auth, set a secret token:
 

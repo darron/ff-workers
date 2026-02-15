@@ -7,6 +7,7 @@ const MAX_STORIES_FOR_SYNTHESIS = 30;
 const MIN_EXTRACTED_TEXT_CHARS = 320;
 const NO_TEXT_SUMMARY = 'No article text available for reliable summarization.';
 const SOCIAL_ONLY_SUMMARY = 'Social-media source only. Treat this as alleged until corroborated by independent reporting.';
+const UNSAFE_URL_SUMMARY = 'Source URL blocked by safety policy (must be public http/https).';
 
 export function isAiSummaryEnabled(env) {
   return String(env?.AI_SUMMARY_ENABLED || 'false').toLowerCase() === 'true';
@@ -115,7 +116,7 @@ async function summarizeRecord(recordId, env) {
 
 async function refreshStorySummaryIfNeeded(env, story) {
   const existingSummary = (story.ai_summary || '').trim();
-  const shouldAttemptSummary = !existingSummary || existingSummary === NO_TEXT_SUMMARY;
+  const shouldAttemptSummary = !existingSummary || existingSummary === NO_TEXT_SUMMARY || existingSummary === UNSAFE_URL_SUMMARY;
   if (!shouldAttemptSummary) {
     return;
   }
@@ -134,10 +135,11 @@ async function refreshStorySummaryIfNeeded(env, story) {
   }
 
   if (!storyText) {
-    if (existingSummary !== NO_TEXT_SUMMARY) {
+    const emptySummaryMessage = extraction.method === 'unsafe_url' ? UNSAFE_URL_SUMMARY : NO_TEXT_SUMMARY;
+    if (existingSummary !== emptySummaryMessage) {
       await env.DB.prepare(
         `UPDATE news_stories SET ai_summary = ? WHERE id = ?`
-      ).bind(NO_TEXT_SUMMARY, story.id).run();
+      ).bind(emptySummaryMessage, story.id).run();
     }
     return;
   }
@@ -351,6 +353,104 @@ function normalizeSourceUrl(rawUrl) {
   }
 }
 
+function getSafePublicHttpUrl(rawUrl) {
+  if (!rawUrl) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      return '';
+    }
+
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    if (!hostname) {
+      return '';
+    }
+
+    if (isBlockedHostname(hostname)) {
+      return '';
+    }
+
+    parsed.hostname = hostname;
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+function isBlockedHostname(hostname) {
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local')
+  ) {
+    return true;
+  }
+
+  return isPrivateOrLocalIp(hostname);
+}
+
+function isPrivateOrLocalIp(hostname) {
+  if (isPrivateIpv4(hostname)) {
+    return true;
+  }
+
+  return isPrivateIpv6(hostname);
+}
+
+function isPrivateIpv4(hostname) {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  const octets = parts.map(p => Number.parseInt(p, 10));
+  if (octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) {
+    return false;
+  }
+
+  const [a, b, c] = octets;
+
+  if (a === 10 || a === 127 || a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+  if (a >= 224) return true; // multicast/reserved
+
+  // Documentation/test networks should also be blocked.
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+
+  return false;
+}
+
+function isPrivateIpv6(hostname) {
+  if (!hostname.includes(':')) {
+    return false;
+  }
+
+  const normalized = hostname.toLowerCase().split('%')[0];
+  if (normalized === '::1' || normalized === '::') {
+    return true;
+  }
+
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) {
+    return true; // unique local
+  }
+
+  return (
+    normalized.startsWith('fe8') ||
+    normalized.startsWith('fe9') ||
+    normalized.startsWith('fea') ||
+    normalized.startsWith('feb')
+  ); // link-local fe80::/10
+}
+
 async function getStoryText(story, sourceType, env) {
   const existingBodyText = normalizeText(story.body_text || '');
   if (existingBodyText.length >= 500) {
@@ -363,7 +463,10 @@ async function getStoryText(story, sourceType, env) {
   }
 
   const normalizedUrl = normalizeSourceUrl(story.url || '');
-  const urlCandidates = Array.from(new Set([normalizedUrl, story.url || ''].filter(Boolean)));
+  const safeCandidates = [normalizedUrl, story.url || '']
+    .map(getSafePublicHttpUrl)
+    .filter(Boolean);
+  const urlCandidates = Array.from(new Set(safeCandidates));
 
   let best = {
     text: existingBodyText.slice(0, MAX_STORY_TEXT_CHARS),
@@ -371,6 +474,15 @@ async function getStoryText(story, sourceType, env) {
     url: story.url || '',
     score: scoreExtraction(existingBodyText, existingBodyText ? 'stored_body_text_partial' : 'none')
   };
+
+  if (urlCandidates.length === 0) {
+    return {
+      text: best.text,
+      method: 'unsafe_url',
+      url: '',
+      persistBodyText: false
+    };
+  }
 
   for (const candidate of urlCandidates) {
     const extracted = await fetchAndExtractFromUrl(candidate);
@@ -383,24 +495,25 @@ async function getStoryText(story, sourceType, env) {
     }
   }
 
-  const shouldTryFallback = sourceType !== 'social' && !isProxyUrl(normalizedUrl);
-  if (shouldTryFallback && best.score < 4 && normalizedUrl) {
+  const primaryFetchUrl = urlCandidates[0] || '';
+  const shouldTryFallback = sourceType !== 'social' && primaryFetchUrl && !isProxyUrl(primaryFetchUrl);
+  if (shouldTryFallback && best.score < 4) {
     if (isSummarizeDaemonFallbackEnabled(env)) {
-      const extracted = await fetchViaSummarizeDaemon(normalizedUrl, env);
+      const extracted = await fetchViaSummarizeDaemon(primaryFetchUrl, env);
       if (isBetterExtraction(extracted, best)) {
         best = extracted;
       }
     }
 
     if (isJinaFallbackEnabled(env)) {
-      const extracted = await fetchViaJinaReader(normalizedUrl);
+      const extracted = await fetchViaJinaReader(primaryFetchUrl);
       if (isBetterExtraction(extracted, best)) {
         best = extracted;
       }
     }
 
     if (isMarkdownNewFallbackEnabled(env) && best.score < 4) {
-      const extracted = await fetchViaMarkdownNew(normalizedUrl);
+      const extracted = await fetchViaMarkdownNew(primaryFetchUrl);
       if (isBetterExtraction(extracted, best)) {
         best = extracted;
       }
@@ -410,7 +523,7 @@ async function getStoryText(story, sourceType, env) {
   return {
     text: (best.text || '').slice(0, MAX_STORY_TEXT_CHARS),
     method: best.method,
-    url: best.url || normalizedUrl || story.url || '',
+    url: best.url || urlCandidates[0] || '',
     persistBodyText: best.method !== 'stored_body_text' && best.method !== 'stored_body_text_partial' && (best.text || '').length >= MIN_EXTRACTED_TEXT_CHARS
   };
 }

@@ -62,7 +62,7 @@ const NEWS_HINTS = [
   'calgaryherald.com',
   'edmontonjournal.com',
   'channel2now.com',
-  'www.theepochtimes.com'
+  'theepochtimes.com'
 ];
 
 function parseHostname(rawUrl) {
