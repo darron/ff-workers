@@ -62,6 +62,82 @@ function parseOffset(rawOffset) {
   return value;
 }
 
+function logSummaryEvent(event, details = {}) {
+  try {
+    console.log(JSON.stringify({
+      event,
+      at: new Date().toISOString(),
+      ...details
+    }));
+  } catch (error) {
+    console.log(`{"event":"${event}","at":"${new Date().toISOString()}","log_error":"failed_to_serialize"}`);
+  }
+}
+
+function serializeError(error) {
+  if (!error) return null;
+  return {
+    message: error.message || String(error),
+    name: error.name || 'Error'
+  };
+}
+
+function incrementCounter(counter, key) {
+  if (!key) return;
+  counter[key] = (counter[key] || 0) + 1;
+}
+
+function createChunkMetrics(recordId, offset, storiesPerJob, totalStories, chunkSize) {
+  return {
+    recordId,
+    offset,
+    storiesPerJob,
+    totalStories,
+    chunkSize,
+    processedStories: 0,
+    storyActions: {},
+    extractionMethods: {},
+    persistedBodyTextCount: 0,
+    synthesisMode: null,
+    synthesisSourceCount: 0,
+    synthesisOmittedCount: 0
+  };
+}
+
+function createRuntimeState() {
+  return {
+    subrequestLimited: false
+  };
+}
+
+function isTooManySubrequestsError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('too many subrequests');
+}
+
+function markSubrequestLimited(runtimeState, error, phase, url = '') {
+  if (!runtimeState || runtimeState.subrequestLimited || !isTooManySubrequestsError(error)) {
+    return;
+  }
+
+  runtimeState.subrequestLimited = true;
+  logSummaryEvent('ai_summary_subrequest_limit', {
+    status: 'detected',
+    phase,
+    url
+  });
+}
+
+function recordStoryOutcome(metrics, outcome) {
+  if (!metrics || !outcome) return;
+  metrics.processedStories += 1;
+  incrementCounter(metrics.storyActions, outcome.action || 'unknown');
+  incrementCounter(metrics.extractionMethods, outcome.extractionMethod || 'none');
+  if (outcome.persistedBodyText) {
+    metrics.persistedBodyTextCount += 1;
+  }
+}
+
 export async function enqueueRecordSummary(env, recordId, reason = 'record_updated', extraPayload = {}) {
   if (!env?.SUMMARY_QUEUE || !recordId) {
     return { queued: false, reason: 'queue_not_configured' };
@@ -80,18 +156,36 @@ export async function enqueueRecordSummary(env, recordId, reason = 'record_updat
 }
 
 export async function processSummaryQueue(batch, env) {
+  const runtimeState = createRuntimeState();
+
   for (const message of batch.messages) {
+    const startedAt = Date.now();
+    const payload = message.body || {};
+    const recordId = payload.recordId || null;
+    const offset = parseOffset(payload.offset);
+    const storiesPerJob = getStoriesPerJob(env, payload);
+
     try {
-      const payload = message.body || {};
-      const recordId = payload.recordId;
       if (!recordId) {
+        logSummaryEvent('ai_summary_queue_skipped', {
+          status: 'ignored',
+          reason: 'missing_record_id'
+        });
         message.ack();
         continue;
       }
 
-      const offset = parseOffset(payload.offset);
-      const storiesPerJob = getStoriesPerJob(env, payload);
-      const nextChunk = await summarizeRecordChunk(recordId, env, { offset, storiesPerJob });
+      if (runtimeState.subrequestLimited) {
+        logSummaryEvent('ai_summary_queue_deferred', {
+          status: 'deferred',
+          recordId,
+          reason: 'subrequest_limit'
+        });
+        message.retry();
+        continue;
+      }
+
+      const nextChunk = await summarizeRecordChunk(recordId, env, { offset, storiesPerJob }, runtimeState);
 
       if (nextChunk.hasMore) {
         const enqueueResult = await enqueueRecordSummary(
@@ -110,15 +204,34 @@ export async function processSummaryQueue(batch, env) {
         }
       }
 
+      logSummaryEvent('ai_summary_queue_job', {
+        status: 'ok',
+        recordId,
+        reason: payload.reason || 'record_updated',
+        hasMore: !!nextChunk.hasMore,
+        nextOffset: nextChunk.nextOffset ?? null,
+        durationMs: Date.now() - startedAt,
+        ...nextChunk.metrics
+      });
+
       message.ack();
     } catch (error) {
+      logSummaryEvent('ai_summary_queue_job', {
+        status: 'failed',
+        recordId,
+        reason: payload.reason || 'record_updated',
+        offset,
+        storiesPerJob,
+        durationMs: Date.now() - startedAt,
+        error: serializeError(error)
+      });
       console.error('Failed to process summary message:', error);
       message.retry();
     }
   }
 }
 
-async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob = DEFAULT_STORIES_PER_JOB } = {}) {
+async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob = DEFAULT_STORIES_PER_JOB } = {}, runtimeState = createRuntimeState()) {
   if (!env?.DB) {
     throw new Error('DB binding missing');
   }
@@ -150,16 +263,19 @@ async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob =
   ).bind(recordId, storiesPerJob, offset).all();
 
   const stories = storiesResult.results || [];
+  const metrics = createChunkMetrics(recordId, offset, storiesPerJob, totalStories, stories.length);
 
   for (const story of stories) {
-    await refreshStorySummaryIfNeeded(env, story);
+    const outcome = await refreshStorySummaryIfNeeded(env, story, runtimeState);
+    recordStoryOutcome(metrics, outcome);
   }
 
   const nextOffset = offset + stories.length;
   if (totalStories > 0 && nextOffset < totalStories) {
     return {
       hasMore: true,
-      nextOffset
+      nextOffset,
+      metrics
     };
   }
 
@@ -171,24 +287,31 @@ async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob =
   ).bind(recordId).all();
   const refreshedStories = refreshedResult.results || [];
 
-  const recordSummary = await buildRecordSummary(env, record, refreshedStories);
+  const recordSummary = await buildRecordSummary(env, record, refreshedStories, runtimeState);
+  metrics.synthesisMode = recordSummary.mode;
+  metrics.synthesisSourceCount = recordSummary.sourceCount;
+  metrics.synthesisOmittedCount = recordSummary.omittedCount;
 
   await env.DB.prepare(
     `UPDATE records SET ai_summary = ? WHERE id = ?`
-  ).bind(recordSummary, recordId).run();
+  ).bind(recordSummary.text, recordId).run();
 
-  return { hasMore: false };
+  return { hasMore: false, metrics };
 }
 
-async function refreshStorySummaryIfNeeded(env, story) {
+async function refreshStorySummaryIfNeeded(env, story, runtimeState = createRuntimeState()) {
   const existingSummary = (story.ai_summary || '').trim();
   const shouldAttemptSummary = !existingSummary || existingSummary === NO_TEXT_SUMMARY || existingSummary === UNSAFE_URL_SUMMARY;
   if (!shouldAttemptSummary) {
-    return;
+    return {
+      action: 'skipped_existing',
+      extractionMethod: 'skipped',
+      persistedBodyText: false
+    };
   }
 
   const sourceType = classifySourceType(story.url || '');
-  const extraction = await getStoryText(story, sourceType, env);
+  const extraction = await getStoryText(story, sourceType, env, runtimeState);
   const storyText = extraction.text;
 
   if (sourceType === 'social' && !storyText) {
@@ -197,7 +320,11 @@ async function refreshStorySummaryIfNeeded(env, story) {
         `UPDATE news_stories SET ai_summary = ? WHERE id = ?`
       ).bind(SOCIAL_ONLY_SUMMARY, story.id).run();
     }
-    return;
+    return {
+      action: 'social_only',
+      extractionMethod: extraction.method,
+      persistedBodyText: false
+    };
   }
 
   if (!storyText) {
@@ -207,28 +334,53 @@ async function refreshStorySummaryIfNeeded(env, story) {
         `UPDATE news_stories SET ai_summary = ? WHERE id = ?`
       ).bind(emptySummaryMessage, story.id).run();
     }
-    return;
+    return {
+      action: extraction.method === 'unsafe_url' ? 'unsafe_url' : 'no_text',
+      extractionMethod: extraction.method,
+      persistedBodyText: false
+    };
   }
 
+  let persistedBodyText = false;
   if (extraction.persistBodyText) {
     await env.DB.prepare(
       `UPDATE news_stories SET body_text = ? WHERE id = ?`
     ).bind(storyText.slice(0, MAX_STORY_TEXT_CHARS), story.id).run();
+    persistedBodyText = true;
   }
 
-  const summary = await summarizeStoryText(env, extraction.url || story.url, sourceType, storyText);
+  const summary = await summarizeStoryText(env, extraction.url || story.url, sourceType, storyText, runtimeState);
   if (!summary) {
-    return;
+    return {
+      action: 'summary_failed',
+      extractionMethod: extraction.method,
+      persistedBodyText
+    };
   }
 
   if (summary !== existingSummary) {
     await env.DB.prepare(
       `UPDATE news_stories SET ai_summary = ? WHERE id = ?`
     ).bind(summary, story.id).run();
+    return {
+      action: 'summary_updated',
+      extractionMethod: extraction.method,
+      persistedBodyText
+    };
   }
+
+  return {
+    action: 'summary_unchanged',
+    extractionMethod: extraction.method,
+    persistedBodyText
+  };
 }
 
-async function summarizeStoryText(env, url, sourceType, storyText) {
+async function summarizeStoryText(env, url, sourceType, storyText, runtimeState) {
+  if (runtimeState?.subrequestLimited) {
+    return heuristicSummary(storyText);
+  }
+
   if (!isAiSummaryEnabled(env) || !env?.AI) {
     return heuristicSummary(storyText);
   }
@@ -243,11 +395,11 @@ async function summarizeStoryText(env, url, sourceType, storyText) {
     storyText
   ].join('\n');
 
-  const aiText = await runAiText(env, prompt, 450);
+  const aiText = await runAiText(env, prompt, 450, runtimeState);
   return aiText || heuristicSummary(storyText);
 }
 
-async function buildRecordSummary(env, record, stories) {
+async function buildRecordSummary(env, record, stories, runtimeState) {
   const credibility = getRecordCredibility(stories);
 
   const sourceRows = stories.map(story => {
@@ -265,8 +417,13 @@ async function buildRecordSummary(env, record, stories) {
 
   const omittedCount = sourceRows.length - orderedRows.length;
 
-  if (!isAiSummaryEnabled(env) || !env?.AI) {
-    return buildNonAiSynthesis(record, credibility, orderedRows, omittedCount);
+  if (!isAiSummaryEnabled(env) || !env?.AI || runtimeState?.subrequestLimited) {
+    return {
+      text: buildNonAiSynthesis(record, credibility, orderedRows, omittedCount),
+      mode: 'fallback',
+      sourceCount: orderedRows.length,
+      omittedCount
+    };
   }
 
   const prompt = [
@@ -294,12 +451,22 @@ async function buildRecordSummary(env, record, stories) {
     ...orderedRows.map((row, index) => `${index + 1}. [${row.sourceType}] ${row.url}\nSummary: ${row.summary || 'No summary available.'}`)
   ].join('\n');
 
-  const aiText = await runAiText(env, prompt, 900);
+  const aiText = await runAiText(env, prompt, 900, runtimeState);
   if (aiText) {
-    return aiText;
+    return {
+      text: aiText,
+      mode: 'ai',
+      sourceCount: orderedRows.length,
+      omittedCount
+    };
   }
 
-  return buildNonAiSynthesis(record, credibility, orderedRows, omittedCount);
+  return {
+    text: buildNonAiSynthesis(record, credibility, orderedRows, omittedCount),
+    mode: 'fallback',
+    sourceCount: orderedRows.length,
+    omittedCount
+  };
 }
 
 function buildNonAiSynthesis(record, credibility, rows, omittedCount) {
@@ -377,7 +544,7 @@ function selectSourcesForSynthesis(sourceRows, maxSources) {
   return [...primaryRows, ...socialRows.slice(0, socialToInclude)];
 }
 
-async function runAiText(env, prompt, maxTokens = 500) {
+async function runAiText(env, prompt, maxTokens = 500, runtimeState) {
   try {
     const model = env.AI_MODEL || DEFAULT_MODEL;
     const result = await env.AI.run(model, {
@@ -397,6 +564,7 @@ async function runAiText(env, prompt, maxTokens = 500) {
 
     return extractAiText(result);
   } catch (error) {
+    markSubrequestLimited(runtimeState, error, 'ai_run');
     console.error('AI call failed:', error);
     return null;
   }
@@ -548,7 +716,7 @@ function isPrivateIpv6(hostname) {
   ); // link-local fe80::/10
 }
 
-async function getStoryText(story, sourceType, env) {
+async function getStoryText(story, sourceType, env, runtimeState) {
   const existingBodyText = normalizeText(story.body_text || '');
   if (existingBodyText.length >= 500) {
     return {
@@ -572,6 +740,15 @@ async function getStoryText(story, sourceType, env) {
     score: scoreExtraction(existingBodyText, existingBodyText ? 'stored_body_text_partial' : 'none')
   };
 
+  if (runtimeState?.subrequestLimited) {
+    return {
+      text: (best.text || '').slice(0, MAX_STORY_TEXT_CHARS),
+      method: best.method,
+      url: story.url || '',
+      persistBodyText: false
+    };
+  }
+
   if (urlCandidates.length === 0) {
     return {
       text: best.text,
@@ -582,35 +759,35 @@ async function getStoryText(story, sourceType, env) {
   }
 
   for (const candidate of urlCandidates) {
-    const extracted = await fetchAndExtractFromUrl(candidate);
+    const extracted = await fetchAndExtractFromUrl(candidate, runtimeState);
     if (isBetterExtraction(extracted, best)) {
       best = extracted;
     }
 
-    if (best.score >= 5) {
+    if (best.score >= 5 || runtimeState?.subrequestLimited) {
       break;
     }
   }
 
   const primaryFetchUrl = urlCandidates[0] || '';
-  const shouldTryFallback = sourceType !== 'social' && primaryFetchUrl && !isProxyUrl(primaryFetchUrl);
+  const shouldTryFallback = sourceType !== 'social' && primaryFetchUrl && !isProxyUrl(primaryFetchUrl) && !runtimeState?.subrequestLimited;
   if (shouldTryFallback && best.score < 4) {
     if (isSummarizeDaemonFallbackEnabled(env)) {
-      const extracted = await fetchViaSummarizeDaemon(primaryFetchUrl, env);
+      const extracted = await fetchViaSummarizeDaemon(primaryFetchUrl, env, runtimeState);
       if (isBetterExtraction(extracted, best)) {
         best = extracted;
       }
     }
 
-    if (isJinaFallbackEnabled(env)) {
-      const extracted = await fetchViaJinaReader(primaryFetchUrl);
+    if (isJinaFallbackEnabled(env) && !runtimeState?.subrequestLimited) {
+      const extracted = await fetchViaJinaReader(primaryFetchUrl, runtimeState);
       if (isBetterExtraction(extracted, best)) {
         best = extracted;
       }
     }
 
-    if (isMarkdownNewFallbackEnabled(env) && best.score < 4) {
-      const extracted = await fetchViaMarkdownNew(primaryFetchUrl);
+    if (isMarkdownNewFallbackEnabled(env) && best.score < 4 && !runtimeState?.subrequestLimited) {
+      const extracted = await fetchViaMarkdownNew(primaryFetchUrl, runtimeState);
       if (isBetterExtraction(extracted, best)) {
         best = extracted;
       }
@@ -634,7 +811,7 @@ function isProxyUrl(urlString) {
   }
 }
 
-async function fetchAndExtractFromUrl(url) {
+async function fetchAndExtractFromUrl(url, runtimeState) {
   try {
     const response = await fetch(url, {
       redirect: 'follow',
@@ -665,12 +842,13 @@ async function fetchAndExtractFromUrl(url) {
 
     return isBetterExtraction(structured, generic) ? structured : generic;
   } catch (error) {
+    markSubrequestLimited(runtimeState, error, 'fetch_source', url);
     console.error(`Failed to fetch story URL ${url}:`, error);
     return null;
   }
 }
 
-async function fetchViaJinaReader(url) {
+async function fetchViaJinaReader(url, runtimeState) {
   try {
     const proxyUrl = `https://r.jina.ai/${url}`;
     const response = await fetch(proxyUrl, {
@@ -687,12 +865,13 @@ async function fetchViaJinaReader(url) {
     const text = await response.text();
     return makeExtractionResult(normalizeText(cleanMarkdownServiceOutput(text)), 'jina_reader', url);
   } catch (error) {
+    markSubrequestLimited(runtimeState, error, 'fetch_jina', url);
     console.error(`Failed jina reader fallback for ${url}:`, error);
     return null;
   }
 }
 
-async function fetchViaMarkdownNew(url) {
+async function fetchViaMarkdownNew(url, runtimeState) {
   try {
     const response = await fetch('https://markdown.new/', {
       method: 'POST',
@@ -714,12 +893,13 @@ async function fetchViaMarkdownNew(url) {
     const text = await response.text();
     return makeExtractionResult(normalizeText(cleanMarkdownServiceOutput(text)), 'markdown_new', url);
   } catch (error) {
+    markSubrequestLimited(runtimeState, error, 'fetch_markdown_new', url);
     console.error(`Failed markdown.new fallback for ${url}:`, error);
     return null;
   }
 }
 
-async function fetchViaSummarizeDaemon(url, env) {
+async function fetchViaSummarizeDaemon(url, env, runtimeState) {
   const daemonBase = getSummarizeDaemonUrl(env);
   if (!daemonBase) {
     return null;
@@ -778,6 +958,7 @@ async function fetchViaSummarizeDaemon(url, env) {
 
     return makeExtractionResult(normalizeText(eventsText), 'summarize_daemon_sse', url);
   } catch (error) {
+    markSubrequestLimited(runtimeState, error, 'fetch_summarize_daemon', url);
     console.error(`Failed summarize daemon fallback for ${url}:`, error);
     return null;
   }

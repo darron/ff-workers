@@ -76,14 +76,14 @@ queue = "massmurdercanada-production-summary"
 
 [[env.production.queues.consumers]]
 queue = "massmurdercanada-production-summary"
-max_batch_size = 5
-max_batch_timeout = 10
+max_batch_size = 1
+max_batch_timeout = 5
 max_retries = 3
 
 [env.production.vars]
 AI_SUMMARY_ENABLED = "true"
 AI_SUMMARY_AUTO_ON_SAVE = "false"
-AI_SUMMARY_STORIES_PER_JOB = "10"
+AI_SUMMARY_STORIES_PER_JOB = "5"
 AI_FETCH_JINA_FALLBACK = "true"
 AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"
 AI_FETCH_SUMMARIZE_DAEMON_URL = ""

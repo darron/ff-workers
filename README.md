@@ -112,6 +112,18 @@ From the admin dashboard, use the `Generate AI` button on a record row. This enq
 - per-story summarization for all linked sources
 - one synthesized summary written to `records.ai_summary`
 
+For backfill, use the `Backfill Missing AI` button in admin. It enqueues records in batches (`25` per request) until all missing/fallback summaries are queued.
+You can also call the API directly:
+
+`POST /admin/api/records/summarize-all` with optional JSON body:
+
+- `limit` (1-100, default `25`)
+- `offset` (default `0`)
+- `only_missing` (default `true`)
+- `include_fallback` (default `true`, includes records with fallback `Automated fallback summary...`)
+
+Set `only_missing` to `false` to enqueue every record.
+
 Extraction order for linked stories:
 
 1. Stored `body_text` (if available)
@@ -122,6 +134,7 @@ Extraction order for linked stories:
 RCMP URLs are normalized from `rcmp-grc.gc.ca` to `rcmp.ca` before fetching to improve hit rate.
 Unsafe source URLs are skipped (only public `http/https` URLs are fetched; localhost/private IP/local hostnames are blocked).
 Large records are processed over multiple queue jobs; final synthesis runs on the last chunk.
+Each queue run now emits a structured Worker log event (`ai_summary_queue_job`) with chunk offsets, extraction methods, story action counts, synthesis mode (`ai`/`fallback`), and duration.
 
 If using summarize daemon with auth, set a secret token:
 

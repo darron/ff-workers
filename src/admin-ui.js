@@ -348,6 +348,7 @@ export function renderAdminDashboard(records = [], stories = []) {
             <h2>Records</h2>
             <div class="action-bar">
                 <button class="btn btn-primary" onclick="openRecordModal()">Add New Record</button>
+                <button class="btn btn-ai" onclick="backfillAiSummaries()">Backfill Missing AI</button>
             </div>
             <table id="records-table">
                 <thead>
@@ -834,6 +835,54 @@ export function renderAdminDashboard(records = [], stories = []) {
                 } else {
                     showAlert('Error: ' + (result.error || 'Failed to queue summary job'), 'error');
                 }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function backfillAiSummaries() {
+            if (!confirm('Queue AI jobs for all records missing summaries (and fallback summaries)?')) {
+                return;
+            }
+
+            let offset = 0;
+            const limit = 25;
+            let queuedTotal = 0;
+            let selectedTotal = 0;
+            let loops = 0;
+
+            try {
+                while (loops < 1000) {
+                    const response = await fetch('/admin/api/records/summarize-all', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            offset,
+                            limit,
+                            only_missing: true,
+                            include_fallback: true
+                        })
+                    });
+                    const result = await response.json();
+
+                    if (!response.ok) {
+                        showAlert('Error: ' + (result.error || 'Failed to queue backfill jobs'), 'error');
+                        return;
+                    }
+
+                    queuedTotal += result.queuedCount || 0;
+                    selectedTotal += result.selectedCount || 0;
+
+                    if (!result.hasMore || result.nextOffset === null || result.nextOffset === undefined) {
+                        showAlert('Backfill queued ' + queuedTotal + ' records (' + selectedTotal + ' selected).');
+                        return;
+                    }
+
+                    offset = result.nextOffset;
+                    loops += 1;
+                }
+
+                showAlert('Backfill stopped early after ' + loops + ' batches. Last offset: ' + offset + '.', 'error');
             } catch (error) {
                 showAlert('Error: ' + error.message, 'error');
             }
