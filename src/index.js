@@ -159,7 +159,7 @@ async function handleAdminRoutes(request, env, path, method) {
           }
         });
       } catch (error) {
-        console.error('Login error:', error);
+        console.error('Login error:', error.message, error.stack);
         return new Response(renderLoginPage('Authentication error'), {
           status: 500,
           headers: { 'Content-Type': 'text/html; charset=utf-8' }

@@ -1,13 +1,22 @@
 /**
- * Utility script to generate a SHA-256 hash of a password for admin authentication
- * 
+ * Utility script to generate a PBKDF2 password hash for admin authentication
+ *
  * Usage: node generate-password-hash.js <password>
+ *
+ * Output format: pbkdf2:<iterations>:<salt_hex>:<hash_hex>
  */
 
 import crypto from 'crypto';
 
-function hashPassword(password) {
-  return crypto.createHash('sha256').update(password).digest('hex');
+const ITERATIONS = 100000; // Cloudflare Workers runtime max
+const KEY_LENGTH = 32; // bytes
+const DIGEST = 'sha256';
+const SALT_LENGTH = 16; // bytes
+
+function generateHash(password) {
+  const salt = crypto.randomBytes(SALT_LENGTH);
+  const derived = crypto.pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, DIGEST);
+  return `pbkdf2:${ITERATIONS}:${salt.toString('hex')}:${derived.toString('hex')}`;
 }
 
 const password = process.argv[2];
@@ -18,16 +27,15 @@ if (!password) {
 }
 
 try {
-  const hash = hashPassword(password);
-  console.log('\nPassword hash (SHA-256):');
+  const hash = generateHash(password);
+  console.log('\nPassword hash (PBKDF2, 100k iterations, random salt):');
   console.log(hash);
-  console.log('\nAdd this to your wrangler.toml or environment variables:');
-  console.log(`ADMIN_PASSWORD_HASH = "${hash}"`);
-  console.log('\nOr set it as a secret:');
-  console.log(`npx wrangler secret put ADMIN_PASSWORD_HASH`);
-  console.log('Then enter the hash when prompted.');
+  console.log('\nSet it as a secret (recommended):');
+  console.log('npx wrangler secret put ADMIN_PASSWORD_HASH');
+  console.log('Then paste the hash above when prompted.');
+  console.log('\nFor staging:');
+  console.log('npx wrangler secret put ADMIN_PASSWORD_HASH --env staging');
 } catch (err) {
   console.error('Error:', err);
   process.exit(1);
 }
-

@@ -3,23 +3,65 @@
  * Uses simple session-based auth with secure cookies
  */
 
-/**
- * Hash a password using Web Crypto API
- */
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+const PBKDF2_ITERATIONS = 100000; // Workers runtime max
+const PBKDF2_HASH = 'SHA-256';
+const PBKDF2_KEY_LENGTH = 32; // bytes
+
+function hexEncode(buffer) {
+  return Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexDecode(hex) {
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error('Invalid hex string');
+  }
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
 }
 
 /**
- * Verify a password against a hash
+ * Derive a key from password + salt using PBKDF2 (Web Crypto API)
  */
-async function verifyPassword(password, hash) {
-  const passwordHash = await hashPassword(password);
-  return passwordHash === hash;
+async function pbkdf2Derive(password, salt, iterations) {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']
+  );
+  const derived = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations, hash: PBKDF2_HASH },
+    keyMaterial,
+    PBKDF2_KEY_LENGTH * 8
+  );
+  return new Uint8Array(derived);
+}
+
+/**
+ * Verify a password against a stored PBKDF2 hash string
+ * Format: pbkdf2:<iterations>:<salt_hex>:<hash_hex>
+ */
+async function verifyPassword(password, storedHash) {
+  const parts = storedHash.split(':');
+  if (parts.length !== 4 || parts[0] !== 'pbkdf2') {
+    return false;
+  }
+  const iterations = parseInt(parts[1], 10);
+  if (!Number.isInteger(iterations) || iterations < 10000 || iterations > 200000) {
+    return false;
+  }
+  const salt = hexDecode(parts[2]);
+  const expectedHash = hexDecode(parts[3]);
+
+  const derived = await pbkdf2Derive(password, salt, iterations);
+
+  // Constant-time comparison that doesn't leak length
+  // Pass ArrayBuffer (.buffer) for broadest Workers compatibility
+  const lengthsMatch = derived.byteLength === expectedHash.byteLength;
+  return lengthsMatch
+    ? crypto.subtle.timingSafeEqual(derived.buffer, expectedHash.buffer)
+    : !crypto.subtle.timingSafeEqual(derived.buffer, derived.buffer);
 }
 
 /**
@@ -49,14 +91,14 @@ export function getSessionToken(request) {
 export function setSessionCookie(token) {
   // Set cookie with HttpOnly, Secure, and SameSite attributes
   // Secure flag should be enabled in production (HTTPS only)
-  return `admin_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`; // 24 hours
+  return `admin_session=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`; // 24 hours
 }
 
 /**
  * Clear session cookie
  */
 export function clearSessionCookie() {
-  return 'admin_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0';
+  return 'admin_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0';
 }
 
 /**
@@ -132,11 +174,10 @@ export async function createSession(env) {
       return token;
     } catch (e) {
       console.error('Failed to store session in database:', e);
-      // Continue anyway - token is still generated
     }
   }
   
-  return token;
+  throw new Error('No session storage available (KV or DB required)');
 }
 
 /**
@@ -166,7 +207,8 @@ export async function destroySession(token, env) {
 
 /**
  * Authenticate user with password
- * Password should be stored as SHA-256 hash in environment variable
+ * Password should be stored as PBKDF2 hash in environment variable
+ * Format: pbkdf2:<iterations>:<salt_hex>:<hash_hex>
  */
 export async function authenticate(password, env) {
   const expectedHash = env.ADMIN_PASSWORD_HASH;
