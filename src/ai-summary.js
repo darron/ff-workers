@@ -62,6 +62,16 @@ function parseOffset(rawOffset) {
   return value;
 }
 
+function extractYearOnly(rawDate) {
+  const text = String(rawDate ?? '').trim();
+  if (!text) {
+    return '';
+  }
+
+  const match = text.match(/\b(1[5-9]\d{2}|20\d{2}|2100)\b/);
+  return match ? match[1] : '';
+}
+
 function logSummaryEvent(event, details = {}) {
   try {
     console.log(JSON.stringify({
@@ -401,6 +411,7 @@ async function summarizeStoryText(env, url, sourceType, storyText, runtimeState)
 
 async function buildRecordSummary(env, record, stories, runtimeState) {
   const credibility = getRecordCredibility(stories);
+  const recordYear = extractYearOnly(record.date);
 
   const sourceRows = stories.map(story => {
     const sourceType = classifySourceType(story.url || '');
@@ -439,8 +450,10 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
     '- alleged: only social-media claims and no independent credible sources',
     '- reported: at least one credible source',
     '- corroborated: two or more independent credible sources align on core facts',
+    '- treat incident date from metadata as YEAR-ONLY; do not infer month/day unless sources explicitly provide them',
     '',
-    `Record: ${record.name || ''} in ${record.city || ''}, ${record.province || ''} (${record.date || ''})`,
+    `Record: ${record.name || ''} in ${record.city || ''}, ${record.province || ''} (${recordYear || 'unknown year'})`,
+    `Incident year (authoritative, year precision only): ${recordYear || 'unknown'}`,
     `Victims/deaths/injuries: ${record.victims ?? ''}/${record.deaths ?? ''}/${record.injuries ?? ''}`,
     `Devices used: ${record.devices_used || 'N/A'}`,
     `Warnings: ${record.warnings || 'N/A'}`,
@@ -471,6 +484,7 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
 
 function buildNonAiSynthesis(record, credibility, rows, omittedCount) {
   const classification = credibility.classification;
+  const recordYear = extractYearOnly(record.date);
   const topFacts = rows
     .filter(row => row.summary)
     .slice(0, 5)
@@ -482,7 +496,7 @@ function buildNonAiSynthesis(record, credibility, rows, omittedCount) {
     classification,
     '',
     '## Incident Summary',
-    `Automated fallback summary for ${record.name || 'incident'} in ${record.city || 'unknown location'} (${record.date || 'unknown date'}).`,
+    `Automated fallback summary for ${record.name || 'incident'} in ${record.city || 'unknown location'} (${recordYear || 'unknown year'}).`,
     '',
     '## Well-Supported Details',
     topFacts || 'No high-quality source summaries are available yet.',
