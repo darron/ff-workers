@@ -12,9 +12,12 @@ function hexEncode(buffer) {
 }
 
 function hexDecode(hex) {
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error('Invalid hex string');
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
   }
   return bytes;
 }
@@ -45,6 +48,9 @@ async function verifyPassword(password, storedHash) {
     return false;
   }
   const iterations = parseInt(parts[1], 10);
+  if (!Number.isInteger(iterations) || iterations < 10000 || iterations > 200000) {
+    return false;
+  }
   const salt = hexDecode(parts[2]);
   const expectedHash = hexDecode(parts[3]);
 
