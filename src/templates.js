@@ -145,9 +145,9 @@ export function renderHomePage(records, currentPath = '/') {
                 ${records.map(record => `
                 <tr>
                     <td>${formatDateYear(record.date)}</td>
-                    <td><a href="/records/${record.id}">${escapeHtml(record.name || '')}</a></td>
+                    <td><a href="/records/${encodeURIComponent(record.id)}">${escapeHtml(record.name || '')}</a></td>
                     <td>${escapeHtml(record.city || '')}</td>
-                    <td><a href="/records/provinces/${(record.province || '').toLowerCase()}">${escapeHtml(record.province || '')}</a></td>
+                    <td><a href="/records/provinces/${encodeURIComponent((record.province || '').toLowerCase())}">${escapeHtml(record.province || '')}</a></td>
                     <td>${formatNullableBool(record.licensed)}</td>
                     <td>${record.victims || 0}</td>
                     <td>${record.deaths || 0}</td>
@@ -459,7 +459,7 @@ export function renderRecordPage(record, currentPath = '/') {
                     <td>${formatDateYear(record.date)}</td>
                     <td>${escapeHtml(record.name || '')}</td>
                     <td>${escapeHtml(record.city || '')}</td>
-                    <td><a href="/records/provinces/${(record.province || '').toLowerCase()}">${escapeHtml(record.province || '')}</a></td>
+                    <td><a href="/records/provinces/${encodeURIComponent((record.province || '').toLowerCase())}">${escapeHtml(record.province || '')}</a></td>
                     <td>${formatNullableBool(record.licensed)}</td>
                     <td>${record.victims || 0}</td>
                     <td>${record.deaths || 0}</td>

@@ -167,7 +167,7 @@ export async function handleAdminAPI(request, env, path, method) {
     }
   } catch (error) {
     console.error('Admin API error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
