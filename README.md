@@ -104,6 +104,30 @@ The Worker is instrumented with `@sentry/cloudflare` and wraps both `fetch` and 
   - `npm install`
   - `npx wrangler deploy --env production`
 
+Optional release tracking with your existing `npx` flow:
+
+```bash
+export SENTRY_AUTH_TOKEN="YOUR_SENTRY_AUTH_TOKEN"
+export SENTRY_ORG="darron-froese"
+export SENTRY_PROJECT="ff-workers"
+
+VERSION="$(npx @sentry/cli releases propose-version)"
+
+npx @sentry/cli releases new "$VERSION"
+npx @sentry/cli releases set-commits "$VERSION" --auto
+
+npx wrangler deploy --env production --var SENTRY_RELEASE:"$VERSION" --var SENTRY_ENVIRONMENT:"production"
+
+npx @sentry/cli releases finalize "$VERSION"
+npx @sentry/cli releases deploys "$VERSION" new -e production
+```
+
+Or run the automated wrapper script:
+
+```bash
+npm run deploy:production:sentry
+```
+
 ## AI Summaries (Staging)
 
 Staging is configured for **manual** AI generation to avoid unnecessary token usage:

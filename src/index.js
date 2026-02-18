@@ -125,7 +125,9 @@ const workerHandler = {
 export default Sentry.withSentry(
   (env) => ({
     dsn: env?.SENTRY_DSN,
-    sendDefaultPii: true
+    sendDefaultPii: true,
+    release: env?.SENTRY_RELEASE,
+    environment: env?.SENTRY_ENVIRONMENT
   }),
   workerHandler
 );
