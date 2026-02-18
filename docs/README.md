@@ -5,15 +5,15 @@ This folder contains all project documentation.
 ## Documentation Index
 
 ### Setup & Configuration
-- **[SETUP.md](./SETUP.md)** - General setup guide for local development and deployment
-- **[ADMIN_SETUP.md](./ADMIN_SETUP.md)** - Admin interface setup, authentication, and API documentation
+- **[SETUP.md](./SETUP.md)** - Local/staging/production setup, queues, deploy workflows, and Sentry release deploy flow
+- **[ADMIN_SETUP.md](./ADMIN_SETUP.md)** - Admin authentication, dashboard operations, AI queue APIs, and Sentry test endpoint
 - **[NVM_GUIDE.md](./NVM_GUIDE.md)** - Node.js version management using nvm
 
 ### Security
 - **[SECURITY.md](./SECURITY.md)** - Comprehensive security documentation, vulnerabilities fixed, and best practices
 
 ### Change History
-- **[CHANGELOG.md](./CHANGELOG.md)** - Recent changes, new features, and migration notes
+- **[CHANGELOG.md](./CHANGELOG.md)** - AI pipeline, production rollout, and monitoring changes
 
 ## Quick Links
 
@@ -27,4 +27,3 @@ This folder contains all project documentation.
 
 ### Development
 - See [CHANGELOG.md](./CHANGELOG.md) for recent changes and new features
-

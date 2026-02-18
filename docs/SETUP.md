@@ -1,144 +1,207 @@
 # Setup Guide
 
-This guide covers setup instructions for the Mass Murder Canada Cloudflare Worker.
+This guide covers local development, staging, and production deployment for the Cloudflare Worker.
 
 ## Prerequisites
 
-- Node.js v20+ (see `NVM_GUIDE.md` for version management)
-- Cloudflare account with Workers enabled
-- Wrangler CLI installed (via npm)
+- Node.js 20+
+- Cloudflare account with Workers, D1, Queues, and AI enabled
+- Wrangler CLI available via `npx` or local install
 
 ## Quick Start
 
-1. **Clone and install dependencies**:
-   ```bash
-   npm install
-   ```
-
-2. **Set up authentication** (see `ADMIN_SETUP.md` for details):
-   ```bash
-   node generate-password-hash.js "your-password"
-   # Add to .dev.vars for local dev, or set as secret for staging/production
-   ```
-
-3. **Run locally**:
-   ```bash
-   npm run dev
-   ```
-
-4. **Deploy to staging**:
-   ```bash
-   npx wrangler deploy --env staging
-   ```
-
-## Local Development
-
-### Using `.dev.vars`
-
-For local development, create a `.dev.vars` file (already gitignored):
+1. Install dependencies:
 
 ```bash
-ADMIN_PASSWORD_HASH="your-generated-hash-here"
+npm install
 ```
 
-Wrangler will automatically load this file during `wrangler dev`.
-
-### Generating Password Hash
+2. Generate admin password hash (PBKDF2):
 
 ```bash
-node generate-password-hash.js "your-secure-password"
+node generate-password-hash.js "your-password"
 ```
 
-This will output a SHA-256 hash that you can use in `.dev.vars` or as a Cloudflare secret.
-
-## Environment Setup
-
-### Development
-
-1. Use `.dev.vars` for local secrets
-2. Use default D1 database binding
-3. KV namespace optional (falls back to D1 for sessions)
-
-### Staging
-
-1. Set secrets: `npx wrangler secret put ADMIN_PASSWORD_HASH --env staging`
-2. KV namespace already configured in `wrangler.toml`
-3. Uses separate D1 database
-
-### Production
-
-1. Set secrets: `npx wrangler secret put ADMIN_PASSWORD_HASH --env production`
-2. Configure KV namespace if desired
-3. Uses production D1 database
-
-## Database Setup
-
-### Running Migrations
+3. Add local secret(s) to `.dev.vars`:
 
 ```bash
-npx wrangler d1 migrations apply massmurdercanada --env staging
-# Or for production:
-npx wrangler d1 migrations apply massmurdercanada --env production
+ADMIN_PASSWORD_HASH="pbkdf2:..."
 ```
 
-### Database Structure
+4. Run locally:
 
-- **records** table: Stores mass murder records
-- **news_stories** table: Stores related news articles
-- **admin_sessions** table: Stores session tokens (created automatically if KV not available)
+```bash
+npm run dev
+```
 
-## Deployment
-
-### Staging
+5. Deploy:
 
 ```bash
 npx wrangler deploy --env staging
-```
-
-Access at: `https://massmurdercanada-staging.darron.workers.dev`
-
-### Production
-
-```bash
+# or
 npx wrangler deploy --env production
 ```
 
-Access at: `https://massmurdercanada.org`
+## Environment Configuration
 
-## Configuration Files
+Environment bindings are defined in `wrangler.toml`.
 
-- **`wrangler.toml`**: Main configuration file
-- **`.dev.vars`**: Local development secrets (gitignored)
-- **`.gitignore`**: Ensures secrets aren't committed
+### Shared runtime
+
+- `compatibility_flags = ["nodejs_compat"]`
+- `DB` (D1)
+- `AUTH_TOKENS` (KV, where configured)
+- `AI` (Workers AI binding in staging/production)
+- `SUMMARY_QUEUE` (Queue producer/consumer in staging/production)
+
+### Staging defaults
+
+- `AI_SUMMARY_ENABLED = "true"`
+- `AI_SUMMARY_AUTO_ON_SAVE = "false"`
+- `AI_SUMMARY_STORIES_PER_JOB = "10"`
+- `AI_FETCH_JINA_FALLBACK = "true"`
+- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
+- `AI_FETCH_SUMMARIZE_DAEMON_URL = ""`
+
+### Production defaults
+
+- `AI_SUMMARY_ENABLED = "true"`
+- `AI_SUMMARY_AUTO_ON_SAVE = "true"`
+- `AI_SUMMARY_STORIES_PER_JOB = "5"`
+- `AI_FETCH_JINA_FALLBACK = "true"`
+- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
+- `AI_FETCH_SUMMARIZE_DAEMON_URL = ""`
+
+## Required Secrets
+
+Set admin hash in each deployed environment:
+
+```bash
+npx wrangler secret put ADMIN_PASSWORD_HASH --env staging
+npx wrangler secret put ADMIN_PASSWORD_HASH --env production
+```
+
+Optional/production observability:
+
+```bash
+npx wrangler secret put SENTRY_DSN --env production
+```
+
+Optional summarize daemon token:
+
+```bash
+npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env staging
+npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env production
+```
+
+## Queue Setup
+
+Create queues once (recommended with latest Wrangler):
+
+```bash
+npx wrangler@latest queues create massmurdercanada-staging-summary \
+  --message-retention-period-secs 86400 \
+  --delivery-delay-secs 0
+
+npx wrangler@latest queues create massmurdercanada-production-summary \
+  --message-retention-period-secs 86400 \
+  --delivery-delay-secs 0
+```
+
+After queue creation, deploy Worker environments so producer/consumer bindings activate.
+
+## Database
+
+Apply migrations:
+
+```bash
+npx wrangler d1 migrations apply massmurdercanada --env staging
+npx wrangler d1 migrations apply massmurdercanada --env production
+```
+
+Core tables:
+
+- `records`
+- `news_stories`
+- `admin_sessions` (D1 fallback session store if KV unavailable)
+
+## Deployment Workflows
+
+### Standard deploy
+
+```bash
+npx wrangler deploy --env staging
+npx wrangler deploy --env production
+```
+
+### Production deploy with Sentry release tracking
+
+Set shell env once (for example in `.envrc`):
+
+- `SENTRY_AUTH_TOKEN`
+- `SENTRY_ORG`
+- `SENTRY_PROJECT`
+
+Then run:
+
+```bash
+npm run deploy:production:sentry
+```
+
+This wraps deploy and automates:
+
+- release version proposal
+- release creation
+- commit association
+- worker deploy with `SENTRY_RELEASE` and `SENTRY_ENVIRONMENT`
+- release finalize and deploy marker
+
+## Operations
+
+Tail logs:
+
+```bash
+npx wrangler tail --env production --format pretty
+```
+
+Backfill missing/fallback AI summaries from admin dashboard:
+
+- Open `/admin`
+- Click `Backfill Missing AI`
+
+Equivalent API (from an authenticated admin session):
+
+```bash
+curl -X POST "https://massmurdercanada.org/admin/api/records/summarize-all" \
+  -H "Content-Type: application/json" \
+  -d '{"limit":25,"offset":0,"only_missing":true,"include_fallback":true}'
+```
 
 ## Troubleshooting
 
-### Node.js Version Issues
+### Queue create fails with "The specified queue settings are invalid"
 
-If you get "Wrangler requires at least Node.js v20.0.0":
+- Use `npx wrangler@latest ...` for queue creation.
+- Older Wrangler versions may fail with this generic error.
 
-```bash
-nvm use 20.11.0  # Or any v20+
-```
+### Sentry package errors referencing `node:async_hooks`
 
-See `docs/NVM_GUIDE.md` for detailed instructions.
+- Ensure `nodejs_compat` compatibility flag remains enabled in `wrangler.toml`.
 
-### Secret Not Working
+### Admin password not working
 
-- Verify secret is set: Check Cloudflare dashboard or try setting again
-- For local dev, ensure `.dev.vars` file exists with correct hash
-- Check that environment matches (staging vs production)
+- Confirm `ADMIN_PASSWORD_HASH` is in PBKDF2 format:
+  - `pbkdf2:<iterations>:<salt_hex>:<hash_hex>`
+- Re-run `node generate-password-hash.js "new-password"` and reset secret.
 
-### Database Connection Issues
+### D1/route issues
 
-- Verify D1 database binding in `wrangler.toml`
-- Check database ID matches your Cloudflare database
-- Ensure migrations have been run
+- Confirm correct `--env` is used for deploy and D1 commands.
+- Verify `wrangler.toml` database IDs and queue names match Cloudflare resources.
 
 ## Related Documentation
 
-- `ADMIN_SETUP.md` - Admin interface setup and usage
-- `SECURITY.md` - Security documentation
-- `NVM_GUIDE.md` - Node.js version management
-- `CHANGELOG.md` - Recent changes and features
-
+- [ADMIN_SETUP.md](./ADMIN_SETUP.md)
+- [SECURITY.md](./SECURITY.md)
+- [NVM_GUIDE.md](./NVM_GUIDE.md)
+- [CHANGELOG.md](./CHANGELOG.md)

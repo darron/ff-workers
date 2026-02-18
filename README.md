@@ -1,191 +1,189 @@
 # Mass Murder Canada - Cloudflare Workers
 
-This is the Cloudflare Workers version of the Mass Murder Canada application, converted from the original Go/Echo application.
+Cloudflare Workers/D1 implementation of the Mass Murder Canada site, migrated from the original Go/Echo app.
 
-**Original Project:** [github.com/darron/ff](https://github.com/darron/ff)
+Original project: [github.com/darron/ff](https://github.com/darron/ff)
 
 ## Features
 
-- Same URL structure as the original application
-- Modern, improved UI design
-- Cloudflare D1 database (SQLite-compatible)
-- **Admin Interface**: Secure admin dashboard for managing records and news stories
-- **REST API**: Full CRUD API for programmatic access
-- **Asynchronous AI synthesis pipeline (staging-ready)**:
-  - per-story summaries
-  - record-level synthesis across all linked sources
-  - source classification (`news`, `official`, `social`, `other`) with social-only incidents flagged as `alleged`
-- All public routes preserved:
-  - `/` - Home page with all records
-  - `/records/group/:group` - Filtered records by group
-  - `/records/provinces/:province` - Filtered by province
-  - `/records/:id` - Individual record detail page
+- Original public URL structure preserved.
+- Admin dashboard for records and linked news stories.
+- REST-style admin APIs for CRUD + AI queue operations.
+- AI summarization pipeline:
+  - Per-story extraction and summary.
+  - Record-level synthesis across linked sources.
+  - Source typing (`official`, `news`, `social`, `other`) with social-only incidents treated as alleged.
+  - Chunked queue processing for large records.
+- AI summaries are rendered as HTML from Markdown on record pages.
+- Sentry error monitoring (`fetch` + `queue`) via `@sentry/cloudflare`.
 
 ## Setup
 
-See **[docs/SETUP.md](./docs/SETUP.md)** for detailed setup instructions.
+See [docs/SETUP.md](./docs/SETUP.md) for full setup.
 
 Quick start:
+
 1. `npm install`
-2. Configure admin password (see [docs/ADMIN_SETUP.md](./docs/ADMIN_SETUP.md))
-3. `npm run dev` for local development
-4. `npx wrangler deploy --env staging` for staging deployment
+2. Configure admin auth (see [docs/ADMIN_SETUP.md](./docs/ADMIN_SETUP.md))
+3. `npm run dev`
+4. Deploy as needed:
+   - Staging: `npx wrangler deploy --env staging`
+   - Production: `npx wrangler deploy --env production`
 
 ## Documentation
 
-All documentation is in the **[docs/](./docs/)** folder:
-
-- **[SETUP.md](./docs/SETUP.md)** - General setup and deployment guide
-- **[ADMIN_SETUP.md](./docs/ADMIN_SETUP.md)** - Admin interface setup and usage
-- **[SECURITY.md](./docs/SECURITY.md)** - Security documentation and best practices
-- **[NVM_GUIDE.md](./docs/NVM_GUIDE.md)** - Node.js version management
-- **[CHANGELOG.md](./docs/CHANGELOG.md)** - Recent changes and features
+- [docs/README.md](./docs/README.md) - Docs index
+- [docs/SETUP.md](./docs/SETUP.md) - Setup/deployment
+- [docs/ADMIN_SETUP.md](./docs/ADMIN_SETUP.md) - Admin dashboard + API
+- [docs/SECURITY.md](./docs/SECURITY.md) - Security notes
+- [docs/NVM_GUIDE.md](./docs/NVM_GUIDE.md) - Node/NVM guidance
+- [docs/CHANGELOG.md](./docs/CHANGELOG.md) - Change history
 
 ## Project Structure
 
-```
+```text
 ff-workers/
 ├── src/
-│   ├── index.js      # Main worker entry point with routing
-│   ├── db.js         # Database query functions
-│   └── templates.js  # HTML template rendering functions
+│   ├── index.js                  # Worker entrypoint (routes + queue + Sentry wrapper)
+│   ├── admin.js                  # Admin API handlers
+│   ├── admin-ui.js               # Admin dashboard HTML/JS
+│   ├── ai-summary.js             # Queue-driven AI summarization pipeline
+│   ├── source-classification.js  # URL/source credibility typing
+│   ├── db.js                     # Record/story queries
+│   ├── auth.js                   # Admin authentication/session helpers
+│   └── templates.js              # Public page templates + markdown renderer
+├── scripts/
+│   └── deploy-production-with-sentry.sh
 ├── migrations/
-│   ├── 0001_initial.sql  # Database schema
-│   ├── 0002_data.sql     # Generated data migration (after running migrate-data.cjs)
-│   └── prod-data/        # Production database migration files
-├── wrangler.toml     # Cloudflare Workers configuration
-├── package.json      # Node.js dependencies
-├── migrate-data.cjs  # Script to migrate data from SQLite to D1
-├── import-prod-dump.cjs  # Script to import production database dump
-└── database_dump.sql     # Production database dump file
+│   ├── 0001_initial.sql
+│   ├── 0002_data.sql
+│   ├── data/
+│   └── prod-data/
+├── wrangler.toml
+├── package.json
+├── migrate-data.cjs
+├── import-prod-dump.cjs
+└── database_dump.sql
 ```
 
-## URL Routes
+## Routes
 
-All original routes are preserved:
+Public:
 
-- `/` - Home page listing all records
-- `/records/group/mass` - Mass killings (4+ victims)
-- `/records/group/massother` - Non-firearms mass killings
-- `/records/group/massfirearms` - Firearms mass killings
-- `/records/group/massfirearmslicensed` - Licensed firearms mass killings
-- `/records/group/oic` - OIC impact records
-- `/records/group/suicide` - Suicide records
-- `/records/provinces/:province` - Filter by province (e.g., `/records/provinces/bc`)
-- `/records/:id` - Individual record detail page
+- `/`
+- `/records/group/:group`
+- `/records/provinces/:province`
+- `/records/:id`
 
-## Database Schema
+Admin:
 
-The database uses the same schema as the original SQLite database:
-
-- **records** table: Contains all record data
-- **news_stories** table: Contains associated news stories linked to records
+- `/admin`
+- `/admin/api/records/*`
+- `/admin/api/stories/*`
+- `/admin/api/sentry-test`
 
 ## Environments
 
-The project has two deployment environments configured:
+Configured in `wrangler.toml`:
 
-- **staging**: Uses a separate database with a complete copy of production data, deployed to `massmurdercanada-staging.darron.workers.dev` (for testing changes before deploying to production)
-- **production**: Uses the production database, deployed to `massmurdercanada.org` and `www.massmurdercanada.org`
+- `compatibility_flags = ["nodejs_compat"]` (required for Sentry SDK)
+- Queue binding name in code: `SUMMARY_QUEUE`
 
-All environments use Cloudflare D1 databases. The staging database is kept in sync with production data for realistic testing. See `wrangler.toml` for database configurations.
+Staging (`--env staging`):
 
-## Development
+- Worker: `massmurdercanada-staging`
+- AI: enabled, manual on save (`AI_SUMMARY_AUTO_ON_SAVE=false`)
+- `AI_SUMMARY_STORIES_PER_JOB=10`
+- Queue: `massmurdercanada-staging-summary`
+- Queue consumer: `max_batch_size=5`, `max_batch_timeout=10`
 
-The worker uses Cloudflare Workers with D1 database. Local development uses `wrangler dev` which provides a local D1 database for testing.
+Production (`--env production`):
 
-## Error Monitoring (Sentry)
+- Worker/routes: `massmurdercanada` on `massmurdercanada.org/*`
+- AI: enabled, auto on save (`AI_SUMMARY_AUTO_ON_SAVE=true`)
+- `AI_SUMMARY_STORIES_PER_JOB=5`
+- Queue: `massmurdercanada-production-summary`
+- Queue consumer: `max_batch_size=1`, `max_batch_timeout=5`
 
-The Worker is instrumented with `@sentry/cloudflare` and wraps both `fetch` and `queue` handlers.
+## AI Summary Pipeline
 
-- Configure `SENTRY_DSN` as a secret:
-  - `npx wrangler secret put SENTRY_DSN --env production`
-- Install dependencies before deploy:
-  - `npm install`
-  - `npx wrangler deploy --env production`
+Trigger paths:
 
-Optional release tracking with your existing `npx` flow:
+- Manual per-record: `POST /admin/api/records/:id/summarize`
+- Bulk backfill: `POST /admin/api/records/summarize-all`
+- Auto-on-save (when enabled): record/story create/update operations enqueue a job
 
-```bash
-export SENTRY_AUTH_TOKEN="YOUR_SENTRY_AUTH_TOKEN"
-export SENTRY_ORG="darron-froese"
-export SENTRY_PROJECT="ff-workers"
-
-VERSION="$(npx @sentry/cli releases propose-version)"
-
-npx @sentry/cli releases new "$VERSION"
-npx @sentry/cli releases set-commits "$VERSION" --auto
-
-npx wrangler deploy --env production --var SENTRY_RELEASE:"$VERSION" --var SENTRY_ENVIRONMENT:"production"
-
-npx @sentry/cli releases finalize "$VERSION"
-npx @sentry/cli releases deploys "$VERSION" new -e production
-```
-
-Or run the automated wrapper script:
-
-```bash
-npm run deploy:production:sentry
-```
-
-## AI Summaries (Staging)
-
-Staging is configured for **manual** AI generation to avoid unnecessary token usage:
-
-- `AI_SUMMARY_ENABLED = "true"`
-- `AI_SUMMARY_AUTO_ON_SAVE = "false"`
-- `AI_SUMMARY_STORIES_PER_JOB = "10"` (process large records in chunks)
-- `AI_FETCH_JINA_FALLBACK = "true"`
-- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
-- `AI_FETCH_SUMMARIZE_DAEMON_URL = ""` (optional, if you run summarize daemon)
-- Queue binding: `SUMMARY_QUEUE`
-- AI binding: `AI`
-
-From the admin dashboard, use the `Generate AI` button on a record row. This enqueues:
-
-- per-story summarization for all linked sources
-- one synthesized summary written to `records.ai_summary`
-
-For backfill, use the `Backfill Missing AI` button in admin. It enqueues records in batches (`25` per request) until all missing/fallback summaries are queued.
-You can also call the API directly:
-
-`POST /admin/api/records/summarize-all` with optional JSON body:
+Bulk backfill request options:
 
 - `limit` (1-100, default `25`)
 - `offset` (default `0`)
 - `only_missing` (default `true`)
-- `include_fallback` (default `true`, includes records with fallback `Automated fallback summary...`)
+- `include_fallback` (default `true`)
 
-Set `only_missing` to `false` to enqueue every record.
+Extraction flow per story:
 
-Extraction order for linked stories:
+1. Reuse stored `body_text` when sufficient.
+2. Direct fetch + structured extraction (JSON-LD/article/main/meta).
+3. Optional summarize daemon fallback (`AI_FETCH_SUMMARIZE_DAEMON_URL`).
+4. Optional fallback readers: `r.jina.ai`, `markdown.new`.
 
-1. Stored `body_text` (if available)
-2. Direct fetch with structured extraction (JSON-LD `articleBody`, meta descriptions, `<article>/<main>` blocks)
-3. Optional summarize daemon fallback (`/v1/summarize` + events stream) when configured
-4. Optional fallback readers (`r.jina.ai`, `markdown.new`) when direct extraction is weak
+Additional behavior:
 
-RCMP URLs are normalized from `rcmp-grc.gc.ca` to `rcmp.ca` before fetching to improve hit rate.
-Unsafe source URLs are skipped (only public `http/https` URLs are fetched; localhost/private IP/local hostnames are blocked).
-Large records are processed over multiple queue jobs; final synthesis runs on the last chunk.
-Each queue run now emits a structured Worker log event (`ai_summary_queue_job`) with chunk offsets, extraction methods, story action counts, synthesis mode (`ai`/`fallback`), and duration.
+- RCMP URLs are normalized from `rcmp-grc.gc.ca` to `rcmp.ca`.
+- Unsafe URLs (non-public/localhost/private IP) are blocked.
+- Large records are processed in chunks; final synthesis runs on last chunk.
+- Source selection for synthesis favors `official/news` and de-emphasizes social links unless social is all that exists.
+- Structured logs are emitted as `ai_summary_queue_job`.
+- Record metadata date is treated as year-only for synthesis context.
 
-If using summarize daemon with auth, set a secret token:
+Optional summarize daemon token secret:
 
-`npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env staging`
+- `npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env production`
+- `npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env staging`
 
-### Queue Setup
+## Queue Setup
 
-Before deploying staging with AI summaries, create the queue once:
+Create queues once (use latest Wrangler):
 
-1. `npx wrangler queues create massmurdercanada-staging-summary`
-2. `npx wrangler deploy --env staging`
+```bash
+npx wrangler@latest queues create massmurdercanada-staging-summary \
+  --message-retention-period-secs 86400 \
+  --delivery-delay-secs 0
+
+npx wrangler@latest queues create massmurdercanada-production-summary \
+  --message-retention-period-secs 86400 \
+  --delivery-delay-secs 0
+```
+
+Then deploy the Worker for each environment.
+
+## Error Monitoring (Sentry)
+
+Sentry is wired through `@sentry/cloudflare` and reads runtime config from env/secrets:
+
+- `SENTRY_DSN` (secret)
+- `SENTRY_RELEASE` (optional var)
+- `SENTRY_ENVIRONMENT` (optional var)
+
+Set DSN secret (production):
+
+```bash
+npx wrangler secret put SENTRY_DSN --env production
+```
+
+Admin Sentry test:
+
+- Dashboard button calls `POST /admin/api/sentry-test`.
+- If `SENTRY_DSN` is not set (e.g., staging), endpoint returns `412` instead of failing deployment/runtime.
+
+Release + deploy workflow:
+
+- One-command flow: `npm run deploy:production:sentry`
+- Script: [scripts/deploy-production-with-sentry.sh](./scripts/deploy-production-with-sentry.sh)
+- Requires env vars in shell: `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`
 
 ## Notes
 
-- The UI has been modernized with improved styling
-- Production data has been migrated from the original Go/SQLite application
-- The application maintains the same URL structure for compatibility
-- Dates display as years only (e.g., "2024" instead of "January 1, 2024")
-- News story body_text is not displayed in detail views (only URLs shown)
-- Column sorting works for all table columns (numeric and text)
+- Dates are stored in mixed formats, but UI and synthesis treat canonical record dates as year-level context.
+- AI backfill targets missing summaries by default and can include existing fallback summaries.
+- Story summaries and record synthesis are stored in D1 (`news_stories.ai_summary`, `records.ai_summary`).

@@ -1,71 +1,74 @@
 # Changelog
 
-## Recent Changes
+## 2026-02-18
 
-### Admin Interface Implementation
-- Added secure admin interface for managing records and news stories
-- Implemented REST API for CRUD operations
-- Added authentication system with session management
+### AI Summaries and Queue Processing
 
-### Security Improvements
-- SQL injection protection (parameterized queries)
-- XSS protection (HTML escaping, safe DOM methods)
-- Path traversal protection (path segment validation)
-- Input validation (UUIDs, URLs, dates)
-- DoS protection (array size limits)
-- Error handling improvements (generic error messages)
+- Added queue-driven AI summarization for records and linked stories.
+- Added chunked processing for large records via queue continuation payloads (`offset`, `storiesPerJob`).
+- Added structured queue telemetry logs (`ai_summary_queue_job`) with action counts, extraction methods, synthesis mode, and duration.
+- Added subrequest-limit handling (`Too many subrequests`) with deferred/retry behavior instead of hard failure.
+- Added source-prioritized synthesis input selection:
+  - favors `official` and `news`
+  - de-emphasizes `social` links unless social links are all that exist
+- Added synthesis context rule to treat record metadata dates as year-only precision.
 
-### UI Enhancements
-- Year-only date input (simplified from full date picker)
-- Auto-generated UUID v4 for record IDs
-- Integrated news stories management in record forms
-- Real-time form updates and validation
+### Source Extraction Improvements
 
-### Technical Changes
-- Added KV namespace for session storage (staging)
-- Fallback to D1 database for sessions if KV unavailable
-- Improved error handling and validation
-- Consistent UUID validation across all endpoints
+- Added multi-stage extraction pipeline:
+  1. stored `body_text`
+  2. direct fetch + structured extraction (`article`, `main`, JSON-LD, metadata)
+  3. optional summarize daemon fallback (`AI_FETCH_SUMMARIZE_DAEMON_URL`)
+  4. optional `r.jina.ai` fallback
+  5. optional `markdown.new` fallback
+- Added RCMP URL normalization (`rcmp-grc.gc.ca` -> `rcmp.ca`) to improve retrieval.
+- Added unsafe URL blocking for non-public targets (localhost/private/local IP ranges).
 
-## Files Added
+### Admin Workflow Enhancements
 
-- `src/auth.js` - Authentication system
-- `src/admin.js` - REST API endpoints
-- `src/admin-ui.js` - Admin dashboard UI
-- `generate-password-hash.js` - Password hash utility
+- Added manual per-record AI trigger endpoint: `POST /admin/api/records/:id/summarize`.
+- Added bulk backfill endpoint: `POST /admin/api/records/summarize-all`.
+- Added backfill filtering controls:
+  - `only_missing` (default `true`)
+  - `include_fallback` (default `true`)
+- Added queueing from admin create/update flows for records and stories when auto-on-save is enabled.
 
-## Files Modified
+### Frontend and Rendering
 
-- `src/index.js` - Added admin routes and security fixes
-- `wrangler.toml` - Added KV namespace configuration
+- Added Markdown-to-HTML rendering for AI summaries on public record pages.
+- Added source badges and credibility status messaging to reflect source classification.
 
-## API Changes
+### Production/Environment Configuration
 
-### New Endpoints
-- `GET /admin/api/records` - List all records
-- `GET /admin/api/records/:id` - Get specific record
-- `POST /admin/api/records` - Create record (with newsStories array)
-- `PUT /admin/api/records/:id` - Update record (with newsStories array)
-- `DELETE /admin/api/records/:id` - Delete record
-- `GET /admin/api/stories` - List all stories
-- `GET /admin/api/stories/:id` - Get specific story
-- `POST /admin/api/stories` - Create story
-- `PUT /admin/api/stories/:id` - Update story
-- `DELETE /admin/api/stories/:id` - Delete story
+- Added staging queue bindings and production queue bindings in `wrangler.toml`.
+- Tuned queue consumers:
+  - staging: `max_batch_size=5`, `max_batch_timeout=10`
+  - production: `max_batch_size=1`, `max_batch_timeout=5`
+- Enabled `nodejs_compat` compatibility flag for Worker runtime compatibility with Sentry SDK.
+- Enabled production AI auto-on-save (`AI_SUMMARY_AUTO_ON_SAVE=true`) with `AI_SUMMARY_STORIES_PER_JOB=5`.
 
-### Breaking Changes
-- Record date format changed from full date to year-only (YYYY format)
-- Record IDs now use UUID v4 format (auto-generated)
+### Error Monitoring (Sentry)
 
-## Migration Notes
+- Integrated `@sentry/cloudflare` at Worker entrypoint using `Sentry.withSentry(...)`.
+- Added environment-based Sentry config (`SENTRY_DSN`, `SENTRY_RELEASE`, `SENTRY_ENVIRONMENT`).
+- Added admin test endpoint `POST /admin/api/sentry-test` with flush confirmation response.
+- Added safe behavior for environments without DSN (returns `412` instead of runtime failure for test endpoint).
+- Added production deployment script with release automation:
+  - `scripts/deploy-production-with-sentry.sh`
+  - `npm run deploy:production:sentry`
+  - creates/finalizes release and records deploy.
 
-### Date Format
-- Existing records with full dates (e.g., "2024-01-01") will continue to work
-- Display code extracts year from any date format
-- New records should use 4-digit year format (e.g., "2024")
+## Earlier Milestones
 
-### ID Format
-- Existing records with old ID format will continue to work
-- New records use UUID v4 format
-- All ID validations now support UUIDs with dashes
+### Admin and API Foundation
 
+- Added secure admin interface and authentication flow.
+- Added CRUD APIs for records and news stories.
+- Added session storage via KV with D1 fallback.
+
+### Security Hardening
+
+- Parameterized SQL queries across database operations.
+- XSS mitigation through escaping and safe DOM patterns.
+- Input validation for IDs, URLs, and date/year values.
+- Path sanitization and improved error handling.

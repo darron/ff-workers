@@ -57,7 +57,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 **Vulnerability**: No authentication for admin routes  
 **Fix Implemented**:
 - Session-based authentication system
-- Password hashing using SHA-256
+- Password hashing using PBKDF2 (salted, iteration-based)
 - Secure cookie handling (HttpOnly, SameSite=Strict)
 - Session token validation (KV or D1 database)
 - 24-hour session expiration  
@@ -73,6 +73,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - Type validation for numeric fields
 - Year validation (4-digit format)
 - URL validation using `new URL()` constructor
+- Public URL enforcement blocks localhost/private/local IP ranges
 - Foreign key validation for relationships (stories → records)
 - Input trimming to remove whitespace  
 **Risk Level**: Medium → Low
@@ -109,6 +110,16 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - Browser native escaping for input values  
 **Risk Level**: Medium → Low
 
+### 10. Observability and Exception Monitoring ✅
+
+**Status**: Implemented  
+**Implementation**:
+- `@sentry/cloudflare` integration at Worker entrypoint
+- Captures exceptions from both `fetch` and `queue` handlers
+- Environment-driven DSN/release context (`SENTRY_DSN`, `SENTRY_RELEASE`, `SENTRY_ENVIRONMENT`)
+- Admin test endpoint for explicit validation (`POST /admin/api/sentry-test`)  
+**Risk Level**: Medium → Low
+
 ## Current Security Measures
 
 ### Authentication & Authorization
@@ -116,13 +127,14 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ All `/admin/*` routes require authentication
 - ✅ Session management via KV (primary) or D1 database (fallback)
 - ✅ Secure cookies: `HttpOnly`, `SameSite=Strict`, 24-hour expiration
-- ✅ Password hashing: SHA-256
+- ✅ Password hashing: PBKDF2 (salted, configurable iterations)
 - ✅ Passwords stored as Cloudflare secrets (not in code)
 
 ### Input Validation
 
 - ✅ All IDs validated (records, stories) - format: alphanumeric, hyphens, underscores (UUIDs supported)
 - ✅ URLs validated using `new URL()` constructor
+- ✅ Public URL-only policy blocks localhost and private/local IP ranges
 - ✅ Year validation: 4-digit format, min/max constraints
 - ✅ Input trimming applied to all text inputs
 - ✅ Array length limits enforced (100 stories max)
@@ -249,4 +261,3 @@ All identified security vulnerabilities have been fixed. The implementation incl
 - Secure authentication and session management
 
 The code is secure and ready for production use.
-
