@@ -16,6 +16,7 @@
     "wrangler": "^4.45.3"
   },
   "dependencies": {
+    "@sentry/cloudflare": "^10.21.0",
     "better-sqlite3": "^12.4.1"
   }
 }

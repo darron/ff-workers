@@ -3,6 +3,7 @@
  */
 
 import { requireAuth, authenticate, destroySession } from './auth.js';
+import * as Sentry from '@sentry/cloudflare';
 import {
   enqueueRecordSummary,
   isAiSummaryEnabled,
@@ -159,6 +160,8 @@ export async function handleAdminAPI(request, env, path, method) {
       return await handleRecordsAPI(request, env, method, id, action);
     } else if (resource === 'stories') {
       return await handleStoriesAPI(request, env, method, id);
+    } else if (resource === 'sentry-test') {
+      return await handleSentryTestAPI(request, env, method);
     } else {
       return new Response(JSON.stringify({ error: 'Invalid resource' }), {
         status: 400,
@@ -172,6 +175,55 @@ export async function handleAdminAPI(request, env, path, method) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+async function handleSentryTestAPI(request, env, method) {
+  if (method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  if (!env?.SENTRY_DSN) {
+    return new Response(JSON.stringify({
+      error: 'Sentry DSN is not configured in this environment'
+    }), {
+      status: 412,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const body = await readJsonBodySafe(request);
+  const message = String(body?.message || 'Manual Sentry test event from admin').slice(0, 300);
+  const generatedAt = new Date().toISOString();
+  const path = new URL(request.url).pathname;
+  const testError = new Error(`${message} [${generatedAt}]`);
+
+  const eventId = Sentry.withScope(scope => {
+    scope.setTag('source', 'admin-api');
+    scope.setTag('event_type', 'manual_sentry_test');
+    scope.setExtra('generated_at', generatedAt);
+    scope.setExtra('path', path);
+    return Sentry.captureException(testError);
+  });
+
+  let flushed = true;
+  try {
+    await Sentry.flush(2000);
+  } catch (flushError) {
+    flushed = false;
+    console.error('Failed to flush Sentry test event:', flushError);
+  }
+
+  return new Response(JSON.stringify({
+    success: true,
+    eventId: eventId || null,
+    flushed,
+    message: flushed ? 'Sentry test event sent' : 'Sentry test event captured but flush was not confirmed'
+  }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
 
 /**
