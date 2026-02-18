@@ -94,6 +94,16 @@ All environments use Cloudflare D1 databases. The staging database is kept in sy
 
 The worker uses Cloudflare Workers with D1 database. Local development uses `wrangler dev` which provides a local D1 database for testing.
 
+## Error Monitoring (Sentry)
+
+The Worker is instrumented with `@sentry/cloudflare` and wraps both `fetch` and `queue` handlers.
+
+- Configure `SENTRY_DSN` as a secret:
+  - `npx wrangler secret put SENTRY_DSN --env production`
+- Install dependencies before deploy:
+  - `npm install`
+  - `npx wrangler deploy --env production`
+
 ## AI Summaries (Staging)
 
 Staging is configured for **manual** AI generation to avoid unnecessary token usage:

@@ -2,6 +2,7 @@
  * Cloudflare Worker for Mass Murder Canada
  */
 
+import * as Sentry from '@sentry/cloudflare';
 import { getAllRecords, findRecord, filterRecordsByGroup, filterRecordsByProvince } from './db.js';
 import { renderHomePage, renderRecordPage } from './templates.js';
 import { handleAdminAPI } from './admin.js';
@@ -29,7 +30,7 @@ function extractId(path, prefix) {
   return sanitizePathSegment(segment);
 }
 
-export default {
+const workerHandler = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -120,6 +121,14 @@ export default {
     await processSummaryQueue(batch, env);
   }
 };
+
+export default Sentry.withSentry(
+  (env) => ({
+    dsn: env?.SENTRY_DSN,
+    sendDefaultPii: true
+  }),
+  workerHandler
+);
 
 /**
  * Handle admin routes

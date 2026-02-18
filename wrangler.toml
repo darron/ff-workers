@@ -1,6 +1,7 @@
 name = "massmurdercanada"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Admin password hash (PBKDF2) - generate with: node generate-password-hash.js "your-password"

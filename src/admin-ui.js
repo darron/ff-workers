@@ -349,6 +349,7 @@ export function renderAdminDashboard(records = [], stories = []) {
             <div class="action-bar">
                 <button class="btn btn-primary" onclick="openRecordModal()">Add New Record</button>
                 <button class="btn btn-ai" onclick="backfillAiSummaries()">Backfill Missing AI</button>
+                <button class="btn secondary" onclick="sendSentryTest()">Send Sentry Test</button>
             </div>
             <table id="records-table">
                 <thead>
@@ -883,6 +884,36 @@ export function renderAdminDashboard(records = [], stories = []) {
                 }
 
                 showAlert('Backfill stopped early after ' + loops + ' batches. Last offset: ' + offset + '.', 'error');
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function sendSentryTest() {
+            if (!confirm('Send a manual test exception to Sentry from this environment?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/admin/api/sentry-test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: 'Manual Sentry test from admin dashboard'
+                    })
+                });
+                const result = await response.json();
+
+                if (response.ok) {
+                    const suffix = result.eventId ? ' (eventId: ' + result.eventId + ')' : '';
+                    if (result.flushed === false) {
+                        showAlert('Warning: event captured but flush was not confirmed' + suffix + '.', 'error');
+                    } else {
+                        showAlert('Sentry test event sent' + suffix + '.');
+                    }
+                } else {
+                    showAlert('Error: ' + (result.error || 'Failed to send Sentry test event'), 'error');
+                }
             } catch (error) {
                 showAlert('Error: ' + error.message, 'error');
             }
