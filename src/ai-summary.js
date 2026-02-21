@@ -311,7 +311,12 @@ async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob =
 
 async function refreshStorySummaryIfNeeded(env, story, runtimeState = createRuntimeState()) {
   const existingSummary = (story.ai_summary || '').trim();
-  const shouldAttemptSummary = !existingSummary || existingSummary === NO_TEXT_SUMMARY || existingSummary === UNSAFE_URL_SUMMARY;
+  const hasCorruptPdfSummary = looksLikeBinaryPdfText(existingSummary);
+  const shouldAttemptSummary =
+    !existingSummary ||
+    existingSummary === NO_TEXT_SUMMARY ||
+    existingSummary === UNSAFE_URL_SUMMARY ||
+    hasCorruptPdfSummary;
   if (!shouldAttemptSummary) {
     return {
       action: 'skipped_existing',
@@ -731,7 +736,8 @@ function isPrivateIpv6(hostname) {
 }
 
 async function getStoryText(story, sourceType, env, runtimeState) {
-  const existingBodyText = normalizeText(story.body_text || '');
+  const rawExistingBodyText = normalizeText(story.body_text || '');
+  const existingBodyText = looksLikeBinaryPdfText(rawExistingBodyText) ? '' : rawExistingBodyText;
   if (existingBodyText.length >= 500) {
     return {
       text: existingBodyText.slice(0, MAX_STORY_TEXT_CHARS),
@@ -840,6 +846,16 @@ async function fetchAndExtractFromUrl(url, runtimeState) {
     }
 
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    const contentDisposition = (response.headers.get('content-disposition') || '').toLowerCase();
+
+    // Avoid decoding PDF/binary blobs as UTF-8 text; that creates gibberish summaries.
+    if (looksLikePdfResponse(url, contentType, contentDisposition)) {
+      return makeExtractionResult('', 'pdf_binary', url);
+    }
+    if (isLikelyBinaryContentType(contentType)) {
+      return makeExtractionResult('', 'binary_content', url);
+    }
+
     const text = await response.text();
 
     if (contentType.includes('text/markdown') || contentType.includes('text/plain')) {
@@ -1068,6 +1084,10 @@ function scoreExtraction(text, method) {
     return 0;
   }
 
+  if (looksLikeBinaryPdfText(normalized)) {
+    return 0;
+  }
+
   let score = 1;
 
   if (normalized.length >= MIN_EXTRACTED_TEXT_CHARS) {
@@ -1089,6 +1109,80 @@ function scoreExtraction(text, method) {
   }
 
   return Math.max(0, score);
+}
+
+function looksLikePdfResponse(url, contentType, contentDisposition = '') {
+  const lowerType = String(contentType || '').toLowerCase();
+  if (lowerType.includes('application/pdf')) {
+    return true;
+  }
+
+  const lowerDisposition = String(contentDisposition || '').toLowerCase();
+  if (lowerDisposition.includes('.pdf')) {
+    return true;
+  }
+
+  return isPdfUrl(url);
+}
+
+function isPdfUrl(url) {
+  try {
+    const parsed = new URL(url || '');
+    const path = String(parsed.pathname || '').toLowerCase();
+    return path.endsWith('.pdf');
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyBinaryContentType(contentType) {
+  const lower = String(contentType || '').toLowerCase();
+  if (!lower) return false;
+  if (lower.startsWith('text/')) return false;
+  if (lower.includes('application/xhtml+xml')) return false;
+  if (lower.includes('application/json')) return false;
+  if (lower.includes('application/xml')) return false;
+  if (lower.includes('application/javascript')) return false;
+  if (lower.includes('application/rss+xml')) return false;
+  if (lower.includes('application/atom+xml')) return false;
+
+  return (
+    lower.includes('application/pdf') ||
+    lower.includes('application/octet-stream') ||
+    lower.includes('application/zip') ||
+    lower.includes('application/gzip') ||
+    lower.includes('application/x-gzip') ||
+    lower.includes('application/x-binary') ||
+    lower.includes('image/') ||
+    lower.includes('audio/') ||
+    lower.includes('video/') ||
+    lower.includes('font/')
+  );
+}
+
+function looksLikeBinaryPdfText(text) {
+  const normalized = normalizeText(text || '');
+  if (!normalized || normalized.length < 40) {
+    return false;
+  }
+
+  const lower = normalized.toLowerCase();
+  if (!lower.includes('%pdf')) {
+    return false;
+  }
+
+  const pdfSignals = [
+    'endobj',
+    'xref',
+    'trailer',
+    '/flatedecode',
+    'startxref',
+    ' obj <<',
+    'stream',
+    'endstream'
+  ];
+  const hits = pdfSignals.reduce((count, signal) => count + (lower.includes(signal) ? 1 : 0), 0);
+  return hits >= 2;
 }
 
 function looksLikeBoilerplate(text) {
