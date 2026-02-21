@@ -88,3 +88,18 @@ AI_SUMMARY_STORIES_PER_JOB = "5"
 AI_FETCH_JINA_FALLBACK = "true"
 AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"
 AI_FETCH_SUMMARIZE_DAEMON_URL = ""
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
