@@ -4,7 +4,7 @@
 
 import * as Sentry from '@sentry/cloudflare';
 import { getAllRecords, findRecord, filterRecordsByGroup, filterRecordsByProvince } from './db.js';
-import { renderHomePage, renderRecordPage } from './templates.js';
+import { renderCanadaMapPage, renderHomePage, renderRecordPage } from './templates.js';
 import { handleAdminAPI } from './admin.js';
 import { authenticate, destroySession, isAuthenticated, setSessionCookie, clearSessionCookie } from './auth.js';
 import { renderLoginPage, renderAdminDashboard } from './admin-ui.js';
@@ -63,6 +63,21 @@ const workerHandler = {
       if (path === '/') {
         const records = await getAllRecords(env);
         return new Response(renderHomePage(records, path), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      // Dedicated Canada map page
+      if (path === '/map') {
+        return new Response(null, {
+          status: 302,
+          headers: { 'Location': '/map/canada' }
+        });
+      }
+
+      if (path === '/map/canada') {
+        const allRecords = await getAllRecords(env);
+        return new Response(renderCanadaMapPage(allRecords, path), {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
       }
