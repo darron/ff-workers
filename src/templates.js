@@ -13,7 +13,6 @@ import {
   CANADA_PROVINCE_GEOGRAPHY
 } from './canada-map-data.js';
 
-const CANADA_PROVINCE_CODE_SET = new Set(CANADA_PROVINCE_GEOGRAPHY.map((province) => province.code));
 const PROVINCE_COLOR_RAMP = ['#d9e8f8', '#b8d3ed', '#90b8e2', '#6294cd', '#3d73af', '#1b4f82'];
 const MAP_METRIC_MODES = [
   { id: 'events_per_million', label: 'Events / 1M' },
@@ -245,8 +244,13 @@ export function renderHomePage(records, currentPath = '/') {
 }
 
 export function renderCanadaMapPage(records, currentPath = '/map/canada') {
-  const provinceMap = buildProvinceMapData(records, currentPath);
-  const safeProvinceDataJson = serializeForInlineScript(provinceMap.byCode);
+  const provinceMap = buildProvinceMapData(records);
+  const clientProvinceData = {};
+  for (const [code, province] of Object.entries(provinceMap.byCode)) {
+    const { path, labelX, labelY, ...rest } = province;
+    clientProvinceData[code] = rest;
+  }
+  const safeProvinceDataJson = serializeForInlineScript(clientProvinceData);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -609,7 +613,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
     </div>
     <script>
         const provinceData = ${safeProvinceDataJson};
-        const metricModes = ${serializeForInlineScript(MAP_METRIC_MODES)};
+        const metricExtents = ${serializeForInlineScript(provinceMap.metricExtents)};
         const defaultMetricMode = '${DEFAULT_MAP_METRIC_MODE}';
         const defaultProvinceCode = '${provinceMap.defaultProvinceCode}';
         const populationRefDate = '${CANADA_POPULATION_REF_DATE}';
@@ -649,94 +653,20 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
             return Number(value || 0).toLocaleString('en-CA');
         }
 
-        function getMetricLabel(mode) {
-            const modeConfig = metricModes.find((item) => item.id === mode);
-            return modeConfig ? modeConfig.label : 'Events / 1M';
-        }
-
-        function getMetricSuffix(mode) {
-            return mode === 'events_per_million' ? '/1M' : '';
-        }
-
-        function formatMetric(value, mode) {
-            const numeric = Number(value || 0);
-            if (mode === 'events_per_million') {
-                if (numeric >= 10) return numeric.toFixed(2);
-                if (numeric >= 1) return numeric.toFixed(3);
-                return numeric.toFixed(4);
-            }
-            return formatInt(numeric);
-        }
-
-        function getMetricValue(province, mode) {
-            if (!province) return 0;
-            if (mode === 'events_total') return Number(province.events) || 0;
-            if (mode === 'deaths_total') return Number(province.deaths) || 0;
-            return Number(province.eventsPerMillion) || 0;
-        }
-
-        function getMetricExtents(mode) {
-            let max = 0;
-            let minPositive = Number.POSITIVE_INFINITY;
-            Object.values(provinceData).forEach((province) => {
-                const metricValue = getMetricValue(province, mode);
-                if (metricValue > max) max = metricValue;
-                if (metricValue > 0 && metricValue < minPositive) minPositive = metricValue;
-            });
-            return {
-                max,
-                minPositive: Number.isFinite(minPositive) ? minPositive : 0
-            };
-        }
-
-        function getFillColor(metricValue, maxMetricValue) {
-            if (metricValue <= 0 || maxMetricValue <= 0) return '#e8eef6';
-            const colorRamp = ${serializeForInlineScript(PROVINCE_COLOR_RAMP)};
-            const ratio = metricValue / maxMetricValue;
-            const rampIndex = Math.max(0, Math.min(
-                colorRamp.length - 1,
-                Math.ceil(ratio * colorRamp.length) - 1
-            ));
-            return colorRamp[rampIndex];
-        }
-
-        function getLabelColor(metricValue, maxMetricValue) {
-            if (metricValue <= 0 || maxMetricValue <= 0) return '#41556e';
-            return (metricValue / maxMetricValue) >= 0.5 ? '#ffffff' : '#1d3d63';
-        }
-
-        function buildProvinceTitle(province, mode) {
-            const metricValue = getMetricValue(province, mode);
-            const metricLabel = getMetricLabel(mode);
-            return province.name + ': ' +
-                (Number(province.events) || 0) + ' events, ' +
-                (Number(province.deaths) || 0) + ' deaths, ' +
-                (Number(province.victims) || 0) + ' victims (' +
-                metricLabel + ': ' + formatMetric(metricValue, mode) + getMetricSuffix(mode) + ')';
-        }
-
         function applyMetricMode(mode) {
             activeMetricMode = mode;
-            const metricExtents = getMetricExtents(mode);
-            const maxMetricValue = Number(metricExtents.max) || 0;
 
             mapProvinceLinks.forEach((link) => {
                 const code = link.getAttribute('data-province-code');
                 const province = provinceData[code];
-                if (!province) return;
-                const metricValue = getMetricValue(province, mode);
+                if (!province || !province.metrics[mode]) return;
+                const m = province.metrics[mode];
                 const shape = link.querySelector('.province-shape');
                 const label = link.querySelector('.province-label');
                 const title = link.querySelector('title');
-                if (shape) {
-                    shape.setAttribute('fill', getFillColor(metricValue, maxMetricValue));
-                }
-                if (label) {
-                    label.setAttribute('fill', getLabelColor(metricValue, maxMetricValue));
-                }
-                if (title) {
-                    title.textContent = buildProvinceTitle(province, mode);
-                }
+                if (shape) shape.setAttribute('fill', m.fill);
+                if (label) label.setAttribute('fill', m.labelColor);
+                if (title) title.textContent = m.title;
             });
 
             metricButtons.forEach((button) => {
@@ -744,12 +674,12 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
                 button.classList.toggle('active', modeId === mode);
             });
 
-            if (legendLow) {
-                const lowText = metricExtents.max > 0 ? formatMetric(metricExtents.minPositive, mode) : '0';
-                legendLow.textContent = 'Low (' + lowText + getMetricSuffix(mode) + ')';
+            const ext = metricExtents[mode];
+            if (ext && legendLow) {
+                legendLow.textContent = 'Low (' + ext.formattedMin + ext.suffix + ')';
             }
-            if (legendHigh) {
-                legendHigh.textContent = 'High (' + formatMetric(metricExtents.max, mode) + getMetricSuffix(mode) + ')';
+            if (ext && legendHigh) {
+                legendHigh.textContent = 'High (' + ext.formattedMax + ext.suffix + ')';
             }
 
             renderProvinceDetail(currentProvinceCode);
@@ -777,14 +707,13 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
 
             const provinceHref = '/records/provinces/' + encodeURIComponent(String(province.code || '').toLowerCase());
             const population = Number(province.population) || 0;
-            const activeMetricValue = getMetricValue(province, activeMetricMode);
-            const activeMetricLabel = getMetricLabel(activeMetricMode);
+            const m = province.metrics[activeMetricMode] || {};
 
             provinceDetailPanel.innerHTML =
                 '<h3>' + escapeText(province.name) + ' (' + escapeText(province.code) + ')</h3>' +
                 '<div class="province-detail-meta">' +
                     '<div class="province-detail-metric"><strong>' + (Number(province.events) || 0) + '</strong><span>Events</span></div>' +
-                    '<div class="province-detail-metric"><strong>' + formatMetric(activeMetricValue, activeMetricMode) + '</strong><span>' + escapeText(activeMetricLabel) + '</span></div>' +
+                    '<div class="province-detail-metric"><strong>' + (m.formatted || '0') + '</strong><span>' + escapeText(m.label || '') + '</span></div>' +
                     '<div class="province-detail-metric"><strong>' + (Number(province.deaths) || 0) + '</strong><span>Deaths</span></div>' +
                     '<div class="province-detail-metric"><strong>' + (Number(province.victims) || 0) + '</strong><span>Victims</span></div>' +
                 '</div>' +
@@ -827,7 +756,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
 </html>`;
 }
 
-function buildProvinceMapData(records, currentPath = '/') {
+function buildProvinceMapData(records) {
   const byCode = {};
   let unmappedCount = 0;
 
@@ -889,11 +818,31 @@ function buildProvinceMapData(records, currentPath = '/') {
   }
 
   const metricExtents = getMetricExtents(byCode);
-  let topProvinceCode = CANADA_PROVINCE_GEOGRAPHY[0]?.code || 'ON';
 
-  if (!byCode[topProvinceCode]) {
-    topProvinceCode = CANADA_PROVINCE_GEOGRAPHY[0].code;
+  for (const mode of MAP_METRIC_MODES) {
+    const ext = metricExtents[mode.id];
+    ext.formattedMax = formatMetricValue(ext.max, mode.id);
+    ext.formattedMin = ext.max > 0 ? formatMetricValue(ext.minPositive, mode.id) : '0';
+    ext.suffix = formatLegendSuffix(mode.id);
   }
+
+  for (const province of Object.values(byCode)) {
+    province.metrics = {};
+    for (const mode of MAP_METRIC_MODES) {
+      const metricValue = getProvinceMetricValue(province, mode.id);
+      const maxValue = metricExtents[mode.id].max;
+      province.metrics[mode.id] = {
+        value: metricValue,
+        fill: getProvinceFillColor(metricValue, maxValue),
+        labelColor: getProvinceLabelColor(metricValue, maxValue),
+        formatted: formatMetricValue(metricValue, mode.id),
+        label: getMetricLabel(mode.id),
+        title: `${province.name}: ${province.events} events, ${province.deaths} deaths, ${province.victims} victims (${getMetricLabel(mode.id)}: ${formatMetricValue(metricValue, mode.id)}${formatLegendSuffix(mode.id)})`
+      };
+    }
+  }
+
+  let topProvinceCode = CANADA_PROVINCE_GEOGRAPHY[0]?.code || 'ON';
 
   for (const province of Object.values(byCode)) {
     const currentTop = byCode[topProvinceCode];
@@ -911,15 +860,11 @@ function buildProvinceMapData(records, currentPath = '/') {
     }
   }
 
-  const activeProvinceCode = getActiveProvinceFromPath(currentPath);
-  const defaultProvinceCode = activeProvinceCode || topProvinceCode;
-
   return {
     byCode,
     metricExtents,
     unmappedCount,
-    activeProvinceCode,
-    defaultProvinceCode
+    defaultProvinceCode: topProvinceCode
   };
 }
 
@@ -1129,20 +1074,6 @@ function getMetricExtents(byCode) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat('en-CA').format(Number(value) || 0);
-}
-
-function getActiveProvinceFromPath(currentPath = '') {
-  const pathMatch = currentPath.match(/^\/records\/provinces\/([^/]+)/i);
-  if (!pathMatch) {
-    return null;
-  }
-
-  const provinceCode = String(pathMatch[1] || '').toUpperCase();
-  if (!CANADA_PROVINCE_CODE_SET.has(provinceCode)) {
-    return null;
-  }
-
-  return provinceCode;
 }
 
 function serializeForInlineScript(value) {
