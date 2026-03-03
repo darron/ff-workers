@@ -9,6 +9,7 @@ import {
   isAiSummaryEnabled,
   isAutoAiSummaryEnabled
 } from './ai-summary.js';
+import { enrichRecordLocation } from './ai-location.js';
 
 function validateAndNormalizePublicHttpUrl(rawUrl) {
   if (!rawUrl) {
@@ -116,6 +117,14 @@ function parseBooleanFlag(value, defaultValue = false) {
 function parseNumberInRange(value, defaultValue, min, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isInteger(parsed)) return defaultValue;
+  if (parsed < min) return min;
+  if (parsed > max) return max;
+  return parsed;
+}
+
+function parseFloatInRange(value, defaultValue, min, max) {
+  const parsed = Number.parseFloat(String(value ?? ''));
+  if (!Number.isFinite(parsed)) return defaultValue;
   if (parsed < min) return min;
   if (parsed > max) return max;
   return parsed;
@@ -242,8 +251,14 @@ async function handleRecordsAPI(request, env, method, id, action) {
       if (id === 'summarize-all') {
         return await triggerBulkRecordSummary(request, env);
       }
+      if (id === 'enrich-location-all') {
+        return await triggerBulkRecordLocationEnrichment(request, env);
+      }
       if (id && action === 'summarize') {
         return await triggerRecordSummary(env, id);
+      }
+      if (id && action === 'enrich-location') {
+        return await triggerRecordLocationEnrichment(request, env, id);
       }
       return await createRecord(request, env);
     
@@ -320,13 +335,32 @@ async function handleStoriesAPI(request, env, method, id) {
 // Record CRUD operations
 
 async function listRecords(env) {
-  const result = await env.DB.prepare(
-    `SELECT id, date, name, city, province, licensed, victims, deaths, 
-            injuries, suicide, devices_used, firearms, possessed_legally, 
-            warnings, oic_impact, ai_summary
-     FROM records
-     ORDER BY date DESC`
-  ).all();
+  let result;
+  try {
+    result = await env.DB.prepare(
+      `SELECT id, date, name, city, province, licensed, victims, deaths, 
+              injuries, suicide, devices_used, firearms, possessed_legally, 
+              warnings, oic_impact, ai_summary,
+              city_verified, city_confidence, city_verification_source, city_verification_notes,
+              location_lat, location_lon, location_source, location_confidence,
+              location_updated_at, location_last_checked_at
+       FROM records
+       ORDER BY date DESC`
+    ).all();
+  } catch (error) {
+    if (!isMissingLocationSchemaError(error)) {
+      throw error;
+    }
+
+    // Fallback for environments where location migration has not yet been applied.
+    result = await env.DB.prepare(
+      `SELECT id, date, name, city, province, licensed, victims, deaths, 
+              injuries, suicide, devices_used, firearms, possessed_legally, 
+              warnings, oic_impact, ai_summary
+       FROM records
+       ORDER BY date DESC`
+    ).all();
+  }
   
   return new Response(JSON.stringify(result.results || []), {
     headers: { 'Content-Type': 'application/json' }
@@ -342,13 +376,32 @@ async function getRecord(env, id) {
     });
   }
   
-  const record = await env.DB.prepare(
-    `SELECT id, date, name, city, province, licensed, victims, deaths, 
-            injuries, suicide, devices_used, firearms, possessed_legally, 
-            warnings, oic_impact, ai_summary
-     FROM records
-     WHERE id = ?`
-  ).bind(id).first();
+  let record;
+  try {
+    record = await env.DB.prepare(
+      `SELECT id, date, name, city, province, licensed, victims, deaths, 
+              injuries, suicide, devices_used, firearms, possessed_legally, 
+              warnings, oic_impact, ai_summary,
+              city_verified, city_confidence, city_verification_source, city_verification_notes,
+              location_lat, location_lon, location_source, location_confidence,
+              location_updated_at, location_last_checked_at
+       FROM records
+       WHERE id = ?`
+    ).bind(id).first();
+  } catch (error) {
+    if (!isMissingLocationSchemaError(error)) {
+      throw error;
+    }
+
+    // Fallback for environments where location migration has not yet been applied.
+    record = await env.DB.prepare(
+      `SELECT id, date, name, city, province, licensed, victims, deaths, 
+              injuries, suicide, devices_used, firearms, possessed_legally, 
+              warnings, oic_impact, ai_summary
+       FROM records
+       WHERE id = ?`
+    ).bind(id).first();
+  }
   
   if (!record) {
     return new Response(JSON.stringify({ error: 'Record not found' }), {
@@ -1145,4 +1198,289 @@ async function triggerBulkRecordSummary(request, env) {
   }), {
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+function isMissingLocationSchemaError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('no such column: city_verified') ||
+    message.includes('no such column: location_lat') ||
+    message.includes('no such table: city_geocode_cache')
+  );
+}
+
+async function markLocationCheckError(env, recordId, error) {
+  const nowIso = new Date().toISOString();
+  const errorText = String(error?.message || error || 'unknown error').slice(0, 300);
+
+  await env.DB.prepare(
+    `UPDATE records
+     SET city_verification_source = COALESCE(city_verification_source, 'error'),
+         city_verification_notes = ?,
+         location_last_checked_at = ?
+     WHERE id = ?`
+  ).bind(
+    `Location enrichment failed: ${errorText}`,
+    nowIso,
+    recordId
+  ).run();
+}
+
+async function triggerRecordLocationEnrichment(request, env, id) {
+  // Validate ID (allow UUIDs with dashes)
+  if (!/^[a-zA-Z0-9_-]+$/.test(id.replace(/-/g, ''))) {
+    return new Response(JSON.stringify({ error: 'Invalid record ID' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const body = await readJsonBodySafe(request);
+  const requestUrl = new URL(request.url);
+  const searchParams = requestUrl.searchParams;
+
+  const force = parseBooleanFlag(
+    body.force ?? searchParams.get('force'),
+    false
+  );
+  const geocode = parseBooleanFlag(
+    body.geocode ?? searchParams.get('geocode'),
+    true
+  );
+  const minConfidence = parseFloatInRange(
+    body.min_confidence ?? body.minConfidence ?? searchParams.get('min_confidence'),
+    Number.NaN,
+    0,
+    1
+  );
+
+  const options = {
+    force,
+    geocode
+  };
+  if (Number.isFinite(minConfidence)) {
+    options.minConfidence = minConfidence;
+  }
+
+  try {
+    const result = await enrichRecordLocation(env, id, options);
+
+    if (!result.ok && result.status === 'not_found') {
+      return new Response(JSON.stringify({ error: 'Record not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      success: !!result.ok,
+      ...result
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    if (isMissingLocationSchemaError(error)) {
+      return new Response(JSON.stringify({
+        error: 'Location enrichment schema is missing. Apply migration 0003_location_enrichment.sql first.'
+      }), {
+        status: 412,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    console.error('Failed to enrich location for record:', id, error);
+    return new Response(JSON.stringify({
+      error: 'Failed to enrich location for record'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function triggerBulkRecordLocationEnrichment(request, env) {
+  const body = await readJsonBodySafe(request);
+  const requestUrl = new URL(request.url);
+  const searchParams = requestUrl.searchParams;
+
+  const limit = parseNumberInRange(
+    body.limit ?? searchParams.get('limit'),
+    4,
+    1,
+    50
+  );
+  const offset = parseNumberInRange(
+    body.offset ?? searchParams.get('offset'),
+    0,
+    0,
+    1000000
+  );
+  const onlyMissing = parseBooleanFlag(
+    body.only_missing ?? body.onlyMissing ?? searchParams.get('only_missing'),
+    true
+  );
+  const force = parseBooleanFlag(
+    body.force ?? searchParams.get('force'),
+    false
+  );
+  const geocode = parseBooleanFlag(
+    body.geocode ?? searchParams.get('geocode'),
+    true
+  );
+  const minConfidence = parseFloatInRange(
+    body.min_confidence ?? body.minConfidence ?? searchParams.get('min_confidence'),
+    Number.NaN,
+    0,
+    1
+  );
+
+  const whereClauses = [];
+  const missingPredicate = `(city_verified IS NULL OR TRIM(city_verified) = '' OR location_lat IS NULL OR location_lon IS NULL)`;
+  if (onlyMissing) {
+    whereClauses.push(missingPredicate);
+    if (!force) {
+      // In non-force mode, only process records that have not been checked yet.
+      // This prevents endless reprocessing of unresolved/unggeocodable records.
+      whereClauses.push(`location_last_checked_at IS NULL`);
+    }
+  }
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const useDynamicMissingWindow = onlyMissing && !force;
+  const effectiveOffset = useDynamicMissingWindow ? 0 : offset;
+
+  try {
+    const eligibleResult = await env.DB.prepare(
+      `SELECT COUNT(*) AS total
+       FROM records
+       ${whereSql}`
+    ).first();
+    const eligibleCount = Number.parseInt(String(eligibleResult?.total || 0), 10) || 0;
+
+    const unresolvedResult = await env.DB.prepare(
+      `SELECT COUNT(*) AS total
+       FROM records
+       WHERE ${missingPredicate}
+         AND location_last_checked_at IS NOT NULL`
+    ).first();
+    const unresolvedCount = Number.parseInt(String(unresolvedResult?.total || 0), 10) || 0;
+
+    const recordsResult = await env.DB.prepare(
+      `SELECT id
+       FROM records
+       ${whereSql}
+       ORDER BY date DESC, id
+       LIMIT ?
+       OFFSET ?`
+    ).bind(limit, effectiveOffset).all();
+
+    const records = recordsResult.results || [];
+    const details = [];
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const row of records) {
+      const options = {
+        force,
+        geocode
+      };
+      if (Number.isFinite(minConfidence)) {
+        options.minConfidence = minConfidence;
+      }
+
+      try {
+        const outcome = await enrichRecordLocation(env, row.id, options);
+        if (outcome.ok) {
+          if (String(outcome.status || '').startsWith('skipped')) {
+            skippedCount += 1;
+          } else {
+            updatedCount += 1;
+          }
+        } else {
+          failedCount += 1;
+        }
+
+        if (details.length < 25) {
+          details.push({
+            id: row.id,
+            status: outcome.status || (outcome.ok ? 'updated' : 'failed'),
+            cityVerified: outcome.cityVerified || null,
+            geocodeStatus: outcome.geocodeStatus || null
+          });
+        }
+      } catch (error) {
+        failedCount += 1;
+        try {
+          await markLocationCheckError(env, row.id, error);
+        } catch (markError) {
+          console.error('Failed to mark location check error for record:', row.id, markError);
+        }
+        if (details.length < 25) {
+          details.push({
+            id: row.id,
+            status: 'failed',
+            error: String(error?.message || error || 'unknown error')
+          });
+        }
+      }
+    }
+
+    const selectedCount = records.length;
+    let hasMore;
+    let nextOffset;
+    let remainingCount = null;
+
+    if (useDynamicMissingWindow) {
+      const remainingResult = await env.DB.prepare(
+        `SELECT COUNT(*) AS total
+         FROM records
+         ${whereSql}`
+      ).first();
+      remainingCount = Number.parseInt(String(remainingResult?.total || 0), 10) || 0;
+      hasMore = remainingCount > 0;
+      nextOffset = hasMore ? 0 : null;
+    } else {
+      nextOffset = offset + selectedCount;
+      hasMore = nextOffset < eligibleCount;
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      onlyMissing,
+      force,
+      geocode,
+      limit,
+      offset,
+      effectiveOffset,
+      eligibleCount,
+      unresolvedCount,
+      remainingCount,
+      selectedCount,
+      updatedCount,
+      skippedCount,
+      failedCount,
+      hasMore,
+      nextOffset: hasMore ? nextOffset : null,
+      details
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    if (isMissingLocationSchemaError(error)) {
+      return new Response(JSON.stringify({
+        error: 'Location enrichment schema is missing. Apply migration 0003_location_enrichment.sql first.'
+      }), {
+        status: 412,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    console.error('Failed bulk location enrichment:', error);
+    return new Response(JSON.stringify({
+      error: 'Failed bulk location enrichment'
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
 }

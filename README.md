@@ -14,6 +14,10 @@ Original project: [github.com/darron/ff](https://github.com/darron/ff)
   - Record-level synthesis across linked sources.
   - Source typing (`official`, `news`, `social`, `other`) with social-only incidents treated as alleged.
   - Chunked queue processing for large records.
+- AI location enrichment pipeline:
+  - AI-assisted city verification from linked source content.
+  - Geocoding + cache table for city/province coordinate reuse.
+  - Per-record and bulk admin API triggers.
 - AI summaries are rendered as HTML from Markdown on record pages.
 - Sentry error monitoring (`fetch` + `queue`) via `@sentry/cloudflare`.
 
@@ -48,6 +52,7 @@ ff-workers/
 │   ├── admin.js                  # Admin API handlers
 │   ├── admin-ui.js               # Admin dashboard HTML/JS
 │   ├── ai-summary.js             # Queue-driven AI summarization pipeline
+│   ├── ai-location.js            # AI city verification + geocoding pipeline
 │   ├── source-classification.js  # URL/source credibility typing
 │   ├── db.js                     # Record/story queries
 │   ├── auth.js                   # Admin authentication/session helpers
@@ -57,6 +62,7 @@ ff-workers/
 ├── migrations/
 │   ├── 0001_initial.sql
 │   ├── 0002_data.sql
+│   ├── 0003_location_enrichment.sql
 │   ├── data/
 │   └── prod-data/
 ├── wrangler.toml
@@ -94,6 +100,9 @@ Staging (`--env staging`):
 - Worker: `massmurdercanada-staging`
 - AI: enabled, manual on save (`AI_SUMMARY_AUTO_ON_SAVE=false`)
 - `AI_SUMMARY_STORIES_PER_JOB=10`
+- `AI_LOCATION_ENABLED=true`
+- `AI_LOCATION_GEOCODE_ENABLED=true`
+- `AI_LOCATION_MIN_CONFIDENCE=0.72`
 - Queue: `massmurdercanada-staging-summary`
 - Queue consumer: `max_batch_size=5`, `max_batch_timeout=10`
 
@@ -102,6 +111,9 @@ Production (`--env production`):
 - Worker/routes: `massmurdercanada` on `massmurdercanada.org/*`
 - AI: enabled, auto on save (`AI_SUMMARY_AUTO_ON_SAVE=true`)
 - `AI_SUMMARY_STORIES_PER_JOB=5`
+- `AI_LOCATION_ENABLED=true`
+- `AI_LOCATION_GEOCODE_ENABLED=true`
+- `AI_LOCATION_MIN_CONFIDENCE=0.72`
 - Queue: `massmurdercanada-production-summary`
 - Queue consumer: `max_batch_size=1`, `max_batch_timeout=5`
 
@@ -140,6 +152,31 @@ Optional summarize daemon token secret:
 
 - `npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env production`
 - `npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env staging`
+
+## AI Location Enrichment
+
+Trigger paths:
+
+- Manual per-record enrichment: `POST /admin/api/records/:id/enrich-location`
+- Bulk enrichment backfill: `POST /admin/api/records/enrich-location-all`
+
+Request options (single + bulk):
+
+- `force` (default `false`) recomputes even when city/coordinates already exist.
+- `geocode` (default `true`) allows coordinate lookups.
+- `min_confidence` (0..1, default from `AI_LOCATION_MIN_CONFIDENCE`, usually `0.72`).
+
+Bulk request options:
+
+- `limit` (1-50, default `12`)
+- `offset` (default `0`)
+- `only_missing` (default `true`)
+
+Schema additions (migration `0003_location_enrichment.sql`):
+
+- `records.city_verified`, `records.city_confidence`, `records.city_verification_source`, `records.city_verification_notes`
+- `records.location_lat`, `records.location_lon`, `records.location_source`, `records.location_confidence`, `records.location_updated_at`, `records.location_last_checked_at`
+- `city_geocode_cache` table for city/province lookup caching
 
 ## Queue Setup
 

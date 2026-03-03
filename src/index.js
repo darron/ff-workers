@@ -3,7 +3,13 @@
  */
 
 import * as Sentry from '@sentry/cloudflare';
-import { getAllRecords, findRecord, filterRecordsByGroup, filterRecordsByProvince } from './db.js';
+import {
+  getAllRecords,
+  getAllRecordsForMap,
+  findRecord,
+  filterRecordsByGroup,
+  filterRecordsByProvince
+} from './db.js';
 import { renderCanadaMapPage, renderHomePage, renderRecordPage } from './templates.js';
 import { handleAdminAPI } from './admin.js';
 import { authenticate, destroySession, isAuthenticated, setSessionCookie, clearSessionCookie } from './auth.js';
@@ -76,7 +82,7 @@ const workerHandler = {
       }
 
       if (path === '/map/canada') {
-        const allRecords = await getAllRecords(env);
+        const allRecords = await getAllRecordsForMap(env);
         return new Response(renderCanadaMapPage(allRecords, path), {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });

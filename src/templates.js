@@ -20,6 +20,22 @@ const MAP_METRIC_MODES = [
   { id: 'deaths_total', label: 'Deaths' }
 ];
 const DEFAULT_MAP_METRIC_MODE = 'events_total';
+const CANADA_GEO_BOUNDS = [[41.5, -141.5], [83.5, -52.0]];
+const PROVINCE_GEO_VIEWPORTS = {
+  AB: { bounds: [[48.8, -120.3], [60.2, -109.8]], maxZoom: 7 },
+  BC: { bounds: [[48.2, -139.2], [60.2, -114.0]], maxZoom: 7 },
+  MB: { bounds: [[48.9, -102.2], [60.1, -88.6]], maxZoom: 7 },
+  NB: { bounds: [[44.2, -69.3], [48.2, -63.6]], maxZoom: 8 },
+  NL: { bounds: [[46.4, -67.9], [60.4, -52.5]], maxZoom: 7 },
+  NS: { bounds: [[43.3, -66.5], [47.2, -59.7]], maxZoom: 8 },
+  NT: { bounds: [[59.4, -136.9], [78.9, -101.0]], maxZoom: 6 },
+  NU: { bounds: [[51.5, -110.0], [83.5, -60.0]], maxZoom: 5 },
+  ON: { bounds: [[41.7, -95.2], [56.9, -74.2]], maxZoom: 6 },
+  PE: { bounds: [[45.9, -64.7], [47.2, -61.8]], maxZoom: 9 },
+  QC: { bounds: [[44.8, -79.9], [62.6, -57.0]], maxZoom: 6 },
+  SK: { bounds: [[49.0, -110.1], [60.1, -101.2]], maxZoom: 7 },
+  YT: { bounds: [[59.8, -141.1], [69.8, -123.8]], maxZoom: 6 }
+};
 
 export function renderHomePage(records, currentPath = '/') {
   return `<!DOCTYPE html>
@@ -259,6 +275,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mass Murder 🇨🇦 | Province Map</title>
     <link rel="stylesheet" href="/css/app.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -479,6 +496,12 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
             display: flex;
             flex-direction: column;
         }
+        .province-detail-content {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
         .province-detail h3 {
             color: #003366;
             margin: 0;
@@ -509,9 +532,6 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
         }
         .province-detail-body {
             margin-top: 10px;
-            flex: 1;
-            overflow-y: auto;
-            padding-right: 6px;
         }
         .province-detail h4 {
             margin: 0 0 8px 0;
@@ -551,6 +571,46 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
             color: #556476;
             font-size: 0.85em;
         }
+        .province-zoom-shell {
+            margin-top: 14px;
+            background: #fff;
+            border: 1px solid #d6e2ef;
+            border-radius: 10px;
+            padding: 12px;
+        }
+        .province-zoom-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .province-zoom-title {
+            color: #003366;
+            font-size: 1.02em;
+            font-weight: 700;
+            margin: 0;
+        }
+        .province-zoom-caption {
+            color: #556476;
+            font-size: 0.82em;
+        }
+        .province-zoom-map {
+            height: 560px;
+            border: 1px solid #d6e2ef;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #f1f6fb;
+        }
+        .province-zoom-map .leaflet-control-attribution {
+            font-size: 10px;
+        }
+        .province-zoom-status {
+            margin-top: 6px;
+            min-height: 1.2em;
+            color: #556476;
+            font-size: 0.78em;
+        }
         a {
             color: #003366;
             text-decoration: none;
@@ -585,7 +645,10 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
                 grid-template-columns: repeat(5, minmax(0, 1fr));
             }
             .province-detail {
-                height: 480px;
+                height: 500px;
+            }
+            .province-zoom-map {
+                height: 460px;
             }
         }
         @media (max-width: 640px) {
@@ -597,6 +660,9 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
             }
             .province-label {
                 font-size: 11px;
+            }
+            .province-zoom-map {
+                height: 360px;
             }
         }
     </style>
@@ -611,13 +677,19 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
         ${renderProvinceMapSection(provinceMap)}
         ${renderFooter()}
     </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const provinceData = ${safeProvinceDataJson};
         const metricExtents = ${serializeForInlineScript(provinceMap.metricExtents)};
+        const provinceGeoViewports = ${serializeForInlineScript(PROVINCE_GEO_VIEWPORTS)};
+        const canadaGeoBounds = ${serializeForInlineScript(CANADA_GEO_BOUNDS)};
         const defaultMetricMode = '${DEFAULT_MAP_METRIC_MODE}';
         const defaultProvinceCode = '${provinceMap.defaultProvinceCode}';
         const populationRefDate = '${CANADA_POPULATION_REF_DATE}';
-        const provinceDetailPanel = document.getElementById('province-detail');
+        const provinceDetailContent = document.getElementById('province-detail-content');
+        const provinceZoomMapHost = document.getElementById('province-zoom-map');
+        const provinceZoomStatus = document.getElementById('province-zoom-status');
+        const provinceQuickList = document.querySelector('.province-quicklist');
         const mapProvinceLinks = Array.from(document.querySelectorAll('a.province-link[data-province-code]'));
         const listProvinceLinks = Array.from(document.querySelectorAll('[data-province-list][data-province-code]'));
         const metricButtons = Array.from(document.querySelectorAll('[data-metric-mode]'));
@@ -625,6 +697,9 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
         const legendHigh = document.getElementById('province-legend-high');
         let activeMetricMode = defaultMetricMode;
         let currentProvinceCode = defaultProvinceCode;
+        let selectedProvinceCode = defaultProvinceCode;
+        let provinceGeoMap = null;
+        let provinceGeoLayer = null;
 
         function escapeText(value) {
             if (value === null || value === undefined) return '';
@@ -685,12 +760,15 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
             renderProvinceDetail(currentProvinceCode);
         }
 
-        function renderProvinceDetail(code) {
-            if (!provinceDetailPanel) return;
+        function renderProvinceDetail(code, persistSelection = false) {
+            if (!provinceDetailContent) return;
 
             const province = provinceData[code] || provinceData[defaultProvinceCode];
             if (!province) return;
             currentProvinceCode = province.code;
+            if (persistSelection) {
+                selectedProvinceCode = province.code;
+            }
 
             const records = Array.isArray(province.records) ? province.records : [];
             const recordsHtml = records.length > 0
@@ -708,8 +786,9 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
             const provinceHref = '/records/provinces/' + encodeURIComponent(String(province.code || '').toLowerCase());
             const population = Number(province.population) || 0;
             const m = province.metrics[activeMetricMode] || {};
+            const mappedEvents = Number(province.mappedEvents) || 0;
 
-            provinceDetailPanel.innerHTML =
+            provinceDetailContent.innerHTML =
                 '<h3>' + escapeText(province.name) + ' (' + escapeText(province.code) + ')</h3>' +
                 '<div class="province-detail-meta">' +
                     '<div class="province-detail-metric"><strong>' + (Number(province.events) || 0) + '</strong><span>Events</span></div>' +
@@ -718,6 +797,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
                     '<div class="province-detail-metric"><strong>' + (Number(province.victims) || 0) + '</strong><span>Victims</span></div>' +
                 '</div>' +
                 '<p class="province-population-note">Population estimate: ' + formatInt(population) + ' (' + populationRefDate + ')</p>' +
+                '<p class="province-population-note">Mapped coordinates: ' + mappedEvents + ' / ' + (Number(province.events) || 0) + ' events</p>' +
                 '<div class="province-detail-body">' +
                     '<h4>Recent events</h4>' +
                     recordsHtml +
@@ -725,17 +805,127 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
                 '<p class="province-detail-link"><a href="' + provinceHref + '">Open all events for ' + escapeText(province.code) + '</a></p>';
 
             setActiveProvince(province.code);
+            renderProvinceGeoMap(province);
         }
 
-        if (provinceDetailPanel && mapProvinceLinks.length > 0) {
+        function setProvinceZoomStatus(message) {
+            if (!provinceZoomStatus) return;
+            provinceZoomStatus.textContent = message || '';
+        }
+
+        function getProvinceViewport(code) {
+            return provinceGeoViewports[String(code || '').toUpperCase()] || null;
+        }
+
+        function initProvinceGeoMap() {
+            if (!provinceZoomMapHost) {
+                return false;
+            }
+            if (provinceGeoMap) {
+                return true;
+            }
+            if (!window.L) {
+                setProvinceZoomStatus('Interactive map library failed to load.');
+                return false;
+            }
+
+            provinceGeoMap = window.L.map(provinceZoomMapHost, {
+                zoomControl: true,
+                attributionControl: true,
+                minZoom: 3,
+                maxZoom: 11
+            });
+            window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 11,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(provinceGeoMap);
+            provinceGeoLayer = window.L.layerGroup().addTo(provinceGeoMap);
+
+            const canadaBounds = window.L.latLngBounds(canadaGeoBounds);
+            if (canadaBounds.isValid()) {
+                provinceGeoMap.fitBounds(canadaBounds, {
+                    padding: [18, 18],
+                    animate: false
+                });
+            }
+
+            return true;
+        }
+
+        function getMarkerRadius(point) {
+            const deaths = Number(point?.deaths) || 0;
+            if (deaths <= 0) return 5;
+            return Math.max(5, Math.min(12, 4 + Math.sqrt(deaths) * 1.6));
+        }
+
+        function renderProvinceGeoMap(province) {
+            if (!province || !initProvinceGeoMap() || !provinceGeoLayer || !window.L) {
+                return;
+            }
+
+            provinceGeoMap.invalidateSize(false);
+            provinceGeoLayer.clearLayers();
+
+            const viewport = getProvinceViewport(province.code);
+            const points = Array.isArray(province.mapRecords) ? province.mapRecords : [];
+
+            if (viewport && Array.isArray(viewport.bounds)) {
+                const provinceBounds = window.L.latLngBounds(viewport.bounds);
+                if (provinceBounds.isValid()) {
+                    provinceGeoMap.fitBounds(provinceBounds, {
+                        padding: [18, 18],
+                        maxZoom: Number(viewport.maxZoom) || 8
+                    });
+                }
+            }
+
+            if (points.length === 0) {
+                setProvinceZoomStatus('No verified city coordinates in this province yet.');
+                return;
+            }
+
+            points.forEach((point) => {
+                const lat = Number(point?.lat);
+                const lon = Number(point?.lon);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+                const marker = window.L.circleMarker([lat, lon], {
+                    radius: getMarkerRadius(point),
+                    color: '#8f1930',
+                    weight: 1.1,
+                    fillColor: '#c8102e',
+                    fillOpacity: 0.76
+                });
+
+                const recordUrl = '/records/' + encodeURIComponent(String(point.id || ''));
+                const popupHtml =
+                    '<strong>' + escapeText(point.year || '') + ' - ' + escapeText(point.name || '') + '</strong><br>' +
+                    escapeText(point.city || '') + '<br>' +
+                    'Deaths: ' + (Number(point.deaths) || 0) + ', Victims: ' + (Number(point.victims) || 0) + '<br>' +
+                    '<a href="' + recordUrl + '">Open record</a>';
+
+                marker.bindPopup(popupHtml);
+                marker.addTo(provinceGeoLayer);
+            });
+
+            setProvinceZoomStatus(
+                'Showing ' + points.length + ' event marker' + (points.length === 1 ? '' : 's') + '. Drag and zoom for detail.'
+            );
+        }
+
+        if (provinceDetailContent && mapProvinceLinks.length > 0) {
             applyMetricMode(defaultMetricMode);
 
             const interactiveLinks = mapProvinceLinks.concat(listProvinceLinks);
             interactiveLinks.forEach((link) => {
                 const code = link.getAttribute('data-province-code');
                 if (!code) return;
-                link.addEventListener('mouseenter', () => renderProvinceDetail(code));
-                link.addEventListener('focus', () => renderProvinceDetail(code));
+                link.addEventListener('mouseenter', () => renderProvinceDetail(code, false));
+                link.addEventListener('focus', () => renderProvinceDetail(code, false));
+                link.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    renderProvinceDetail(code, true);
+                });
             });
 
             metricButtons.forEach((button) => {
@@ -748,7 +938,10 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
 
             const mapSvg = document.getElementById('canada-province-map');
             if (mapSvg) {
-                mapSvg.addEventListener('mouseleave', () => renderProvinceDetail(defaultProvinceCode));
+                mapSvg.addEventListener('mouseleave', () => renderProvinceDetail(selectedProvinceCode, false));
+            }
+            if (provinceQuickList) {
+                provinceQuickList.addEventListener('mouseleave', () => renderProvinceDetail(selectedProvinceCode, false));
             }
         }
     </script>
@@ -772,7 +965,9 @@ function buildProvinceMapData(records) {
       eventsPerMillion: 0,
       victims: 0,
       deaths: 0,
-      records: []
+      records: [],
+      mappedEvents: 0,
+      mapRecords: []
     };
   }
 
@@ -794,15 +989,33 @@ function buildProvinceMapData(records) {
     province.events += 1;
     province.victims += victims;
     province.deaths += deaths;
+    const displayCity = String(record.city_verified || record.city || '');
     province.records.push({
       id: String(record.id || ''),
       year: formatDateYear(record.date),
       name: String(record.name || ''),
-      city: String(record.city || ''),
+      city: displayCity,
       victims,
       deaths,
       sortDate
     });
+
+    const latitude = toFiniteNumber(record.location_lat);
+    const longitude = toFiniteNumber(record.location_lon);
+    if (hasUsableCoordinate(latitude, longitude)) {
+      province.mappedEvents += 1;
+      province.mapRecords.push({
+        id: String(record.id || ''),
+        year: formatDateYear(record.date),
+        name: String(record.name || ''),
+        city: displayCity,
+        victims,
+        deaths,
+        lat: Number(latitude.toFixed(6)),
+        lon: Number(longitude.toFixed(6)),
+        sortDate
+      });
+    }
   }
 
   for (const province of Object.values(byCode)) {
@@ -811,7 +1024,13 @@ function buildProvinceMapData(records) {
       if (b.deaths !== a.deaths) return b.deaths - a.deaths;
       return b.victims - a.victims;
     });
+    province.mapRecords.sort((a, b) => {
+      if (b.sortDate !== a.sortDate) return b.sortDate - a.sortDate;
+      if (b.deaths !== a.deaths) return b.deaths - a.deaths;
+      return b.victims - a.victims;
+    });
     province.records = province.records.slice(0, 5).map(({ sortDate, ...record }) => record);
+    province.mapRecords = province.mapRecords.map(({ sortDate, ...record }) => record);
     province.eventsPerMillion = province.population > 0
       ? (province.events / province.population) * 1000000
       : 0;
@@ -919,8 +1138,18 @@ function renderProvinceMapSection(provinceMap) {
                   : ''}
             </div>
             <aside id="province-detail" class="province-detail">
-                ${renderProvinceDetailPanel(defaultProvince)}
+                <div id="province-detail-content" class="province-detail-content">
+                    ${renderProvinceDetailPanel(defaultProvince)}
+                </div>
             </aside>
+        </div>
+        <div class="province-zoom-shell">
+            <div class="province-zoom-header">
+                <p class="province-zoom-title">City-Level Event Map</p>
+                <span class="province-zoom-caption">Click a province above to lock selection</span>
+            </div>
+            <div id="province-zoom-map" class="province-zoom-map" aria-label="Zoomable province map showing event coordinates"></div>
+            <p id="province-zoom-status" class="province-zoom-status"></p>
         </div>
     </section>
   `;
@@ -983,6 +1212,7 @@ function renderProvinceDetailPanel(province) {
         <div class="province-detail-metric"><strong>${province.victims}</strong><span>Victims</span></div>
     </div>
     <p class="province-population-note">Population estimate: ${formatNumber(province.population)} (${escapeHtml(CANADA_POPULATION_REF_DATE)})</p>
+    <p class="province-population-note">Mapped coordinates: ${formatNumber(province.mappedEvents)} / ${formatNumber(province.events)} events</p>
     <div class="province-detail-body">
         <h4>Recent events</h4>
         ${recentEventsMarkup}
@@ -1048,6 +1278,26 @@ function formatMetricValue(value, metricMode) {
     return numeric.toFixed(4);
   }
   return formatNumber(numeric);
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasUsableCoordinate(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return false;
+  }
+  if (Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001) {
+    return false;
+  }
+  return (
+    lat >= 40 &&
+    lat <= 85 &&
+    lon >= -145 &&
+    lon <= -50
+  );
 }
 
 function getMetricExtents(byCode) {
