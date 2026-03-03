@@ -275,7 +275,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mass Murder 🇨🇦 | Province Map</title>
     <link rel="stylesheet" href="/css/app.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -677,7 +677,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
         ${renderProvinceMapSection(provinceMap)}
         ${renderFooter()}
     </div>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script>
         const provinceData = ${safeProvinceDataJson};
         const metricExtents = ${serializeForInlineScript(provinceMap.metricExtents)};

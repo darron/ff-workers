@@ -1379,13 +1379,19 @@ async function triggerBulkRecordLocationEnrichment(request, env) {
     let skippedCount = 0;
     let failedCount = 0;
 
-    for (const row of records) {
+    for (let i = 0; i < records.length; i++) {
+      const row = records[i];
       const options = {
         force,
         geocode
       };
       if (Number.isFinite(minConfidence)) {
         options.minConfidence = minConfidence;
+      }
+
+      // Respect Nominatim's 1 req/sec rate limit between geocode requests.
+      if (geocode && i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1100));
       }
 
       try {
