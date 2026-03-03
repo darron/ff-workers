@@ -62,10 +62,12 @@ export async function enrichRecordLocation(env, recordId, options = {}) {
     };
   }
 
-  const hasVerifiedCity = normalizeText(record.city_verified).length > 0;
+  const verifiedCity = normalizeCityName(record.city_verified);
+  const hasVerifiedCity = verifiedCity.length > 0;
   const hasCoordinates = isFiniteNumber(record.location_lat) && isFiniteNumber(record.location_lon);
 
-  if (!force && hasVerifiedCity && (hasCoordinates || !geocode)) {
+  // Skip only when fully enriched (verified city + coordinates), regardless of geocode mode.
+  if (!force && hasVerifiedCity && hasCoordinates) {
     return {
       ok: true,
       status: 'skipped_already_enriched',
@@ -83,16 +85,25 @@ export async function enrichRecordLocation(env, recordId, options = {}) {
 
   const cityVerification = await verifyCityFromSources(env, record, stories);
   const recordCity = normalizeCityName(record.city);
+  const existingCityConfidence = Number(record.city_confidence);
 
   let selectedCity = '';
   let selectedCityConfidence = 0;
   let selectedCitySource = '';
-  let selectedCityNotes = cityVerification.reasoning || '';
+  let selectedCityNotes = cityVerification.reasoning || normalizeText(record.city_verification_notes || '');
 
   if (cityVerification.city && cityVerification.confidence >= minConfidence) {
     selectedCity = cityVerification.city;
     selectedCityConfidence = cityVerification.confidence;
     selectedCitySource = 'ai_sources';
+  } else if (verifiedCity) {
+    selectedCity = verifiedCity;
+    selectedCityConfidence = Math.max(
+      cityVerification.confidence || 0,
+      Number.isFinite(existingCityConfidence) ? existingCityConfidence : 0,
+      0.55
+    );
+    selectedCitySource = normalizeText(record.city_verification_source || '') || 'existing_verified';
   } else if (recordCity) {
     selectedCity = recordCity;
     selectedCityConfidence = Math.max(cityVerification.confidence || 0, 0.55);
