@@ -14,6 +14,16 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
+function hasFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') return false;
+  return Number.isFinite(Number(value));
+}
+
+function formatCoordPair(lat, lon) {
+  if (!hasFiniteNumber(lat) || !hasFiniteNumber(lon)) return '';
+  return `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}`;
+}
+
 export function renderLoginPage(error = null) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -205,6 +215,10 @@ export function renderAdminDashboard(records = [], stories = []) {
             background: #0d6efd;
             color: white;
         }
+        .btn-location {
+            background: #198754;
+            color: white;
+        }
         .btn:hover {
             opacity: 0.8;
         }
@@ -349,6 +363,7 @@ export function renderAdminDashboard(records = [], stories = []) {
             <div class="action-bar">
                 <button class="btn btn-primary" onclick="openRecordModal()">Add New Record</button>
                 <button class="btn btn-ai" onclick="backfillAiSummaries()">Backfill Missing AI</button>
+                <button class="btn btn-location" onclick="backfillLocationEnrichment()">Backfill Missing Location</button>
                 <button class="btn secondary" onclick="sendSentryTest()">Send Sentry Test</button>
             </div>
             <table id="records-table">
@@ -358,6 +373,8 @@ export function renderAdminDashboard(records = [], stories = []) {
                         <th>Date</th>
                         <th>Name</th>
                         <th>City</th>
+                        <th>Verified City</th>
+                        <th>Coords</th>
                         <th>Province</th>
                         <th>Victims</th>
                         <th>Deaths</th>
@@ -371,12 +388,15 @@ export function renderAdminDashboard(records = [], stories = []) {
                         <td>${escapeHtml(r.date || '')}</td>
                         <td>${escapeHtml(r.name || '')}</td>
                         <td>${escapeHtml(r.city || '')}</td>
+                        <td>${escapeHtml(r.city_verified || '')}</td>
+                        <td>${escapeHtml(formatCoordPair(r.location_lat, r.location_lon))}</td>
                         <td>${escapeHtml(r.province || '')}</td>
                         <td>${r.victims || 0}</td>
                         <td>${r.deaths || 0}</td>
                         <td class="actions">
                             <button class="btn btn-edit" onclick="editRecord('${escapeHtml(r.id)}')">Edit</button>
                             <button class="btn btn-ai" onclick="generateRecordSummary('${escapeHtml(r.id)}')">Generate AI</button>
+                            <button class="btn btn-location" onclick="enrichLocation('${escapeHtml(r.id)}')">Enrich Location</button>
                             <button class="btn btn-delete" onclick="deleteRecord('${escapeHtml(r.id)}')">Delete</button>
                         </td>
                     </tr>
@@ -440,6 +460,22 @@ export function renderAdminDashboard(records = [], stories = []) {
                 <div class="form-group">
                     <label for="recordProvince">Province</label>
                     <input type="text" id="recordProvince" name="province">
+                </div>
+                <div class="form-group">
+                    <label for="recordCityVerified">Verified City (AI)</label>
+                    <input type="text" id="recordCityVerified" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="recordCityConfidence">City Confidence</label>
+                    <input type="text" id="recordCityConfidence" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="recordLocationCoords">Coordinates</label>
+                    <input type="text" id="recordLocationCoords" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="recordLocationSource">Location Source</label>
+                    <input type="text" id="recordLocationSource" readonly>
                 </div>
                 <div class="form-group">
                     <label for="recordVictims">Victims</label>
@@ -561,12 +597,15 @@ export function renderAdminDashboard(records = [], stories = []) {
                     <td>\${escapeHtml(r.date || '')}</td>
                     <td>\${escapeHtml(r.name || '')}</td>
                     <td>\${escapeHtml(r.city || '')}</td>
+                    <td>\${escapeHtml(r.city_verified || '')}</td>
+                    <td>\${escapeHtml(formatCoordPair(r.location_lat, r.location_lon))}</td>
                     <td>\${escapeHtml(r.province || '')}</td>
                     <td>\${r.victims || 0}</td>
                     <td>\${r.deaths || 0}</td>
                     <td class="actions">
                         <button class="btn btn-edit" onclick="editRecord('\${escapeHtml(r.id)}')">Edit</button>
                         <button class="btn btn-ai" onclick="generateRecordSummary('\${escapeHtml(r.id)}')">Generate AI</button>
+                        <button class="btn btn-location" onclick="enrichLocation('\${escapeHtml(r.id)}')">Enrich Location</button>
                         <button class="btn btn-delete" onclick="deleteRecord('\${escapeHtml(r.id)}')">Delete</button>
                     </td>
                 </tr>
@@ -597,6 +636,16 @@ export function renderAdminDashboard(records = [], stories = []) {
                 "'": '&#039;'
             };
             return String(text).replace(/[&<>"']/g, m => map[m]);
+        }
+
+        function hasFiniteNumber(value) {
+            if (value === null || value === undefined || value === '') return false;
+            return Number.isFinite(Number(value));
+        }
+
+        function formatCoordPair(lat, lon) {
+            if (!hasFiniteNumber(lat) || !hasFiniteNumber(lon)) return '';
+            return Number(lat).toFixed(4) + ', ' + Number(lon).toFixed(4);
         }
 
         function showAlert(message, type = 'success') {
@@ -659,6 +708,12 @@ export function renderAdminDashboard(records = [], stories = []) {
                         document.getElementById('recordName').value = record.name || '';
                         document.getElementById('recordCity').value = record.city || '';
                         document.getElementById('recordProvince').value = record.province || '';
+                        document.getElementById('recordCityVerified').value = record.city_verified || '';
+                        document.getElementById('recordCityConfidence').value = hasFiniteNumber(record.city_confidence)
+                            ? Number(record.city_confidence).toFixed(2)
+                            : '';
+                        document.getElementById('recordLocationCoords').value = formatCoordPair(record.location_lat, record.location_lon);
+                        document.getElementById('recordLocationSource').value = record.location_source || '';
                         document.getElementById('recordVictims').value = record.victims || '';
                         document.getElementById('recordDeaths').value = record.deaths || '';
                         document.getElementById('recordInjuries').value = record.injuries || '';
@@ -688,6 +743,10 @@ export function renderAdminDashboard(records = [], stories = []) {
                 form.reset();
                 // Generate UUID v4
                 document.getElementById('recordId').value = crypto.randomUUID();
+                document.getElementById('recordCityVerified').value = '';
+                document.getElementById('recordCityConfidence').value = '';
+                document.getElementById('recordLocationCoords').value = '';
+                document.getElementById('recordLocationSource').value = '';
                 // Clear news stories
                 document.getElementById('newsStoriesContainer').innerHTML = '';
             }
@@ -841,6 +900,38 @@ export function renderAdminDashboard(records = [], stories = []) {
             }
         }
 
+        async function enrichLocation(id) {
+            if (!id) {
+                showAlert('Record ID is required to enrich location', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(\`/admin/api/records/\${id}/enrich-location\`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        force: false,
+                        geocode: true,
+                        min_confidence: 0.72
+                    })
+                });
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    const city = result.cityVerified || 'N/A';
+                    const geo = (result.latitude !== null && result.longitude !== null)
+                        ? \` (\${result.latitude.toFixed(4)}, \${result.longitude.toFixed(4)})\`
+                        : '';
+                    showAlert(\`Location enrichment complete for \${id}: city \${city}\${geo}\`);
+                } else {
+                    showAlert('Error: ' + (result.error || 'Failed to enrich location'), 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
         async function backfillAiSummaries() {
             if (!confirm('Queue AI jobs for all records missing summaries (and fallback summaries)?')) {
                 return;
@@ -884,6 +975,117 @@ export function renderAdminDashboard(records = [], stories = []) {
                 }
 
                 showAlert('Backfill stopped early after ' + loops + ' batches. Last offset: ' + offset + '.', 'error');
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function backfillLocationEnrichment() {
+            if (!confirm('Run location enrichment in batches for records missing verified city/coordinates?')) {
+                return;
+            }
+
+            let offset = 0;
+            const limit = 4;
+            const maxAttempts = 1500;
+            const maxConsecutiveErrors = 5;
+            let updatedTotal = 0;
+            let skippedTotal = 0;
+            let failedTotal = 0;
+            let selectedTotal = 0;
+            let attempts = 0;
+            let batchesCompleted = 0;
+            let consecutiveErrors = 0;
+
+            try {
+                while (attempts < maxAttempts) {
+                    attempts += 1;
+                    let result = null;
+
+                    try {
+                        const response = await fetch('/admin/api/records/enrich-location-all', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                offset,
+                                limit,
+                                only_missing: true,
+                                force: false,
+                                geocode: true,
+                                min_confidence: 0.72
+                            })
+                        });
+
+                        try {
+                            result = await response.json();
+                        } catch {
+                            result = {};
+                        }
+
+                        if (!response.ok) {
+                            throw new Error(result.error || 'Failed to run location enrichment batches');
+                        }
+                    } catch (error) {
+                        consecutiveErrors += 1;
+                        if (consecutiveErrors >= maxConsecutiveErrors) {
+                            showAlert(
+                                'Location backfill paused after repeated errors. Updated: ' + updatedTotal +
+                                ', skipped: ' + skippedTotal +
+                                ', failed: ' + failedTotal +
+                                '. Last error: ' + error.message,
+                                'error'
+                            );
+                            return;
+                        }
+
+                        // Retry same offset; the backend keeps offset at 0 in missing-only mode.
+                        await new Promise(resolve => setTimeout(resolve, 1200 * consecutiveErrors));
+                        continue;
+                    }
+
+                    consecutiveErrors = 0;
+                    batchesCompleted += 1;
+
+                    updatedTotal += result.updatedCount || 0;
+                    skippedTotal += result.skippedCount || 0;
+                    failedTotal += result.failedCount || 0;
+                    selectedTotal += result.selectedCount || 0;
+
+                    if (!result.hasMore || result.nextOffset === null || result.nextOffset === undefined) {
+                        const unresolvedSuffix = Number.isFinite(Number(result.unresolvedCount))
+                            ? ', unresolved checked: ' + Number(result.unresolvedCount)
+                            : '';
+                        showAlert(
+                            'Location backfill finished. Updated: ' + updatedTotal +
+                            ', skipped: ' + skippedTotal +
+                            ', failed: ' + failedTotal +
+                            ' (' + selectedTotal + ' selected' + unresolvedSuffix + ').',
+                            failedTotal > 0 ? 'error' : 'success'
+                        );
+                        loadData();
+                        return;
+                    }
+
+                    offset = result.nextOffset;
+
+                    if (batchesCompleted % 15 === 0) {
+                        const remaining = Number.isFinite(Number(result.remainingCount))
+                            ? Number(result.remainingCount)
+                            : null;
+                        showAlert(
+                            'Location backfill is running. Updated: ' + updatedTotal +
+                            ', remaining unchecked: ' + (remaining !== null ? remaining : 'unknown') + '.'
+                        );
+                    }
+                }
+
+                showAlert(
+                    'Location backfill stopped after ' + maxAttempts +
+                    ' attempts. Updated: ' + updatedTotal +
+                    ', skipped: ' + skippedTotal +
+                    ', failed: ' + failedTotal + '.',
+                    'error'
+                );
             } catch (error) {
                 showAlert('Error: ' + error.message, 'error');
             }

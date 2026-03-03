@@ -51,6 +51,56 @@ export async function getAllRecords(env) {
 }
 
 /**
+ * Get all records for map rendering, including optional verified location fields.
+ * Falls back when location enrichment columns are unavailable.
+ */
+export async function getAllRecordsForMap(env) {
+  if (!env.DB) {
+    throw new Error('DB binding is not available in environment');
+  }
+
+  try {
+    const enrichedResult = await env.DB.prepare(
+      `SELECT r.id, r.date, r.name, r.city, r.province, r.licensed, r.victims, 
+              r.deaths, r.injuries, r.suicide, r.devices_used, r.firearms,
+              r.possessed_legally, r.warnings, r.oic_impact, r.ai_summary,
+              r.city_verified, r.location_lat, r.location_lon
+       FROM records r
+       ORDER BY r.date DESC`
+    ).all();
+
+    return enrichedResult.results || [];
+  } catch (error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (
+      message.includes('no such column: r.city_verified') ||
+      message.includes('no such column: city_verified') ||
+      message.includes('no such column: r.location_lat') ||
+      message.includes('no such column: location_lat') ||
+      message.includes('no such column: r.location_lon') ||
+      message.includes('no such column: location_lon')
+    ) {
+      const fallbackResult = await env.DB.prepare(
+        `SELECT r.id, r.date, r.name, r.city, r.province, r.licensed, r.victims, 
+                r.deaths, r.injuries, r.suicide, r.devices_used, r.firearms,
+                r.possessed_legally, r.warnings, r.oic_impact, r.ai_summary
+         FROM records r
+         ORDER BY r.date DESC`
+      ).all();
+
+      return (fallbackResult.results || []).map((record) => ({
+        ...record,
+        city_verified: null,
+        location_lat: null,
+        location_lon: null
+      }));
+    }
+
+    throw error;
+  }
+}
+
+/**
  * Filter records by group
  */
 export function filterRecordsByGroup(records, group) {
@@ -95,4 +145,3 @@ export function formatNullableBool(value) {
   }
   return value === 1 ? 'Yes' : 'No';
 }
-

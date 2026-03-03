@@ -44,6 +44,8 @@ npx wrangler secret put ADMIN_PASSWORD_HASH --env production
 - News story CRUD.
 - Single-record AI generation (`Generate AI` button).
 - Bulk AI backfill (`Backfill Missing AI` button).
+- Single-record location enrichment (`Enrich Location` button).
+- Bulk location backfill (`Backfill Missing Location` button).
 - Sentry test event button (if enabled in environment).
 
 ## AI Behavior in Admin
@@ -98,6 +100,23 @@ All endpoints require admin authentication (session cookie).
     - `offset` (default `0`)
     - `only_missing` (default `true`)
     - `include_fallback` (default `true`)
+
+### AI location enrichment APIs
+
+- `POST /admin/api/records/:id/enrich-location`
+  - enriches one record with AI-verified city + optional geocode
+  - options:
+    - `force` (default `false`)
+    - `geocode` (default `true`)
+    - `min_confidence` (0..1, optional)
+- `POST /admin/api/records/enrich-location-all`
+  - bulk enrichment with options:
+    - `limit` (1-50, default `12`)
+    - `offset` (default `0`)
+    - `only_missing` (default `true`)
+    - `force` (default `false`)
+    - `geocode` (default `true`)
+    - `min_confidence` (0..1, optional)
 
 ### Sentry test API
 
