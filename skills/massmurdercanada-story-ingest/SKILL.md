@@ -51,7 +51,7 @@ Batch submissions are allowed:
 }
 ```
 
-Maximum batch size is 20.
+Maximum batch size is 5.
 
 ## Review Proposal
 
@@ -155,18 +155,13 @@ Approval should include:
 - `agent_confidence`, 0 to 1
 - `agent_reason`, one concise evidence-based sentence
 
-For `create_record`, include optional `record` overrides only when the Worker proposal is clearly right but a field needs correction:
+For `create_record`, do not send `record` field overrides. Approve the Worker-proposed record ID only when the proposed record is correct enough to create as-is. Report field corrections separately for human/admin review.
 
 ```json
 {
-  "record": {
-    "date": "2026",
-    "name": "Surname",
-    "city": "Calgary",
-    "province": "AB",
-    "victims": 2,
-    "deaths": 2
-  }
+  "record_id": "worker-proposed-record-uuid",
+  "agent_confidence": 0.92,
+  "agent_reason": "The source describes a new Calgary incident with two child deaths."
 }
 ```
 

@@ -17,6 +17,15 @@
 - Documented metadata-update gap for later facts, such as replacing `Unknown` after a name is released.
 - Added focused Node tests for extraction, event-date derivation, name/date guardrails, hard candidate checks, and structured record search.
 
+### Pre-Public Ingestion Hardening
+
+- Added bounded public-source fetching with manual redirect validation, DNS checks, timeouts, and response-size caps.
+- Added canonical story URL persistence, backfill normalization, and DB-level unique indexes for story URLs and active ingest proposals (`0005_story_canonical_urls.sql`, `0006_story_canonical_url_backfill.sql`).
+- Reduced agent ingest batches to 5 URLs and added a Worker-side KV rate limiter.
+- Locked create-record approvals so bearer-token agents cannot override Worker-reviewed canonical record fields.
+- Disabled third-party source extraction fallbacks by default and documented disclosure tradeoffs.
+- Tightened model JSON parsing, Sentry capture/PII settings, admin external-link rel attributes, and staging token rotation permissions.
+
 ## 2026-03-02
 
 ### Location Enrichment and Map Drilldown

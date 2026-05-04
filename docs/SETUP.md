@@ -59,8 +59,8 @@ Environment bindings are defined in `wrangler.toml`.
 - `AI_SUMMARY_ENABLED = "true"`
 - `AI_SUMMARY_AUTO_ON_SAVE = "false"`
 - `AI_SUMMARY_STORIES_PER_JOB = "10"`
-- `AI_FETCH_JINA_FALLBACK = "true"`
-- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
+- `AI_FETCH_JINA_FALLBACK = "false"`
+- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "false"`
 - `AI_FETCH_SUMMARIZE_DAEMON_URL = ""`
 
 ### Production defaults
@@ -68,8 +68,8 @@ Environment bindings are defined in `wrangler.toml`.
 - `AI_SUMMARY_ENABLED = "true"`
 - `AI_SUMMARY_AUTO_ON_SAVE = "true"`
 - `AI_SUMMARY_STORIES_PER_JOB = "5"`
-- `AI_FETCH_JINA_FALLBACK = "true"`
-- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"`
+- `AI_FETCH_JINA_FALLBACK = "false"`
+- `AI_FETCH_MARKDOWN_NEW_FALLBACK = "false"`
 - `AI_FETCH_SUMMARIZE_DAEMON_URL = ""`
 
 ## Required Secrets
@@ -100,6 +100,10 @@ Optional agent ingestion token:
 npx wrangler secret put INGEST_API_TOKEN --env staging
 npx wrangler secret put INGEST_API_TOKEN --env production
 ```
+
+Optional agent ingestion rate limit:
+
+- `INGEST_RATE_LIMIT_PER_MINUTE` defaults to `60` when `AUTH_TOKENS` KV is configured.
 
 ## Queue Setup
 

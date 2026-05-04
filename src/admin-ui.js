@@ -424,7 +424,7 @@ export function renderAdminDashboard(records = [], stories = []) {
                     <tr>
                         <td>${escapeHtml(s.id || '')}</td>
                         <td>${escapeHtml(s.record_id || '')}</td>
-                        <td><a href="${escapeHtml(s.url || '#')}" target="_blank">${escapeHtml(s.url || '')}</a></td>
+                        <td><a href="${escapeHtml(s.url || '#')}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.url || '')}</a></td>
                         <td class="actions">
                             <button class="btn btn-edit" onclick="editStory('${escapeHtml(s.id)}')">Edit</button>
                             <button class="btn btn-delete" onclick="deleteStory('${escapeHtml(s.id)}')">Delete</button>
@@ -617,7 +617,7 @@ export function renderAdminDashboard(records = [], stories = []) {
                 <tr>
                     <td>\${escapeHtml(s.id || '')}</td>
                     <td>\${escapeHtml(s.record_id || '')}</td>
-                    <td><a href="\${escapeHtml(s.url || '#')}" target="_blank">\${escapeHtml(s.url || '')}</a></td>
+                    <td><a href="\${escapeHtml(s.url || '#')}" target="_blank" rel="noopener noreferrer">\${escapeHtml(s.url || '')}</a></td>
                     <td class="actions">
                         <button class="btn btn-edit" onclick="editStory('\${escapeHtml(s.id)}')">Edit</button>
                         <button class="btn btn-delete" onclick="deleteStory('\${escapeHtml(s.id)}')">Delete</button>

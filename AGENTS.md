@@ -47,6 +47,9 @@ These instructions are for coding agents working in this repository.
 ## Story Ingestion
 
 - Normal remote-agent story ingestion must use `/admin/api/ingest/*`, not the generic story CRUD endpoint.
+- Ingested story URLs are normalized into `news_stories.canonical_url`; preserve DB-level dedupe when changing story writes.
+- Source fetching must use the shared public-fetch helper so redirects, DNS checks, timeouts, and response-size limits stay consistent.
+- Keep agent ingest batches small; current API limit is 5 URLs per request.
 - The ingest flow is:
   1. Agent submits URL.
   2. Worker extracts facts and proposes `attach_to_record`, `create_record`, `duplicate`, or `needs_review`.
@@ -64,6 +67,8 @@ These instructions are for coding agents working in this repository.
 - Relevant migrations:
   - `0003_location_enrichment.sql` for verified city/geocode fields.
   - `0004_ingest_proposals.sql` for story ingest proposals.
+  - `0005_story_canonical_urls.sql` for canonical story URL dedupe.
+  - `0006_story_canonical_url_backfill.sql` for normalizing initial canonical URL backfills.
 - Code should return clear `412` responses when a required migration is missing.
 
 ## Mapping and Location

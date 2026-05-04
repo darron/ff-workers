@@ -133,6 +133,7 @@ const workerHandler = {
       return new Response('Page not found', { status: 404 });
     } catch (error) {
       console.error('Error handling request:', error);
+      Sentry.captureException(error, { tags: { area: 'worker-fetch' } });
       // Don't expose internal error details to users
       return new Response('An error occurred', { status: 500 });
     }
@@ -146,7 +147,7 @@ const workerHandler = {
 export default Sentry.withSentry(
   (env) => ({
     dsn: env?.SENTRY_DSN,
-    sendDefaultPii: true,
+    sendDefaultPii: false,
     release: env?.SENTRY_RELEASE,
     environment: env?.SENTRY_ENVIRONMENT
   }),
@@ -192,6 +193,7 @@ async function handleAdminRoutes(request, env, path, method) {
         });
       } catch (error) {
         console.error('Login error:', error.message, error.stack);
+        Sentry.captureException(error, { tags: { area: 'admin-login' } });
         return new Response(renderLoginPage('Authentication error'), {
           status: 500,
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
@@ -247,6 +249,7 @@ async function handleAdminRoutes(request, env, path, method) {
       });
     } catch (error) {
       console.error('Dashboard error:', error);
+      Sentry.captureException(error, { tags: { area: 'admin-dashboard' } });
       return new Response('Error loading dashboard', { status: 500 });
     }
   }

@@ -8,14 +8,16 @@
  * 4. Worker validates/deduplicates again, writes records/stories, and queues summary work.
  */
 
+import * as Sentry from '@sentry/cloudflare';
 import { enqueueRecordSummary } from './ai-summary.js';
 import { classifySourceType } from './source-classification.js';
-import { validateAndNormalizePublicHttpUrl } from './url-safety.js';
+import { safeFetchPublicText, validateAndNormalizePublicHttpUrl } from './url-safety.js';
 
 const DEFAULT_MODEL = '@cf/meta/llama-3.1-8b-instruct';
-const MAX_BATCH_URLS = 20;
+const MAX_BATCH_URLS = 5;
 const MAX_EXTRACTED_TEXT_CHARS = 14000;
 const MAX_AI_TEXT_CHARS = 9000;
+const MAX_SOURCE_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_TITLE_CHARS = 300;
 const MAX_REASON_CHARS = 900;
 const MAX_CANDIDATES_FOR_AI = 8;
@@ -27,6 +29,7 @@ const MAX_RECORD_SEARCH_DATE_WINDOW_DAYS = 366;
 const DEFAULT_WORKER_MIN_CONFIDENCE = 0.65;
 const DEFAULT_AGENT_MIN_CONFIDENCE = 0.65;
 const DEFAULT_CREATE_RECORD_MIN_CONFIDENCE = 0.7;
+const DEFAULT_INGEST_RATE_LIMIT_PER_MINUTE = 60;
 
 const ACTION_ATTACH_TO_RECORD = 'attach_to_record';
 const ACTION_CREATE_RECORD = 'create_record';
@@ -53,6 +56,11 @@ export async function handleIngestAPI(request, env, method, segments) {
   const action = segments[5] || '';
 
   try {
+    const rateLimit = await checkIngestRateLimit(request, env);
+    if (rateLimit) {
+      return rateLimit;
+    }
+
     if (collection === 'records' && proposalId === 'search' && method === 'GET') {
       return await searchRecords(request, env);
     }
@@ -85,13 +93,54 @@ export async function handleIngestAPI(request, env, method, segments) {
   } catch (error) {
     if (isMissingIngestSchemaError(error)) {
       return jsonResponse({
-        error: 'Ingest proposal schema is missing. Apply migration 0004_ingest_proposals.sql first.'
+        error: 'Ingest schema is missing. Apply migrations 0004_ingest_proposals.sql and 0005_story_canonical_urls.sql first.'
       }, 412);
     }
 
     console.error('Ingest API error:', error);
+    Sentry.captureException(error, { tags: { area: 'ingest' } });
     return jsonResponse({ error: 'Internal server error' }, 500);
   }
+}
+
+async function checkIngestRateLimit(request, env) {
+  if (!env?.AUTH_TOKENS) {
+    return null;
+  }
+
+  const limit = parseIntegerInRange(
+    env.INGEST_RATE_LIMIT_PER_MINUTE,
+    DEFAULT_INGEST_RATE_LIMIT_PER_MINUTE,
+    1,
+    1000
+  );
+  const key = await buildRateLimitKey(request);
+  const windowId = Math.floor(Date.now() / 60000);
+  const storageKey = `ingest_rate:${key}:${windowId}`;
+
+  try {
+    const current = Number(await env.AUTH_TOKENS.get(storageKey));
+    if (Number.isFinite(current) && current >= limit) {
+      return jsonResponse({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    await env.AUTH_TOKENS.put(storageKey, String((Number.isFinite(current) ? current : 0) + 1), {
+      expirationTtl: 120
+    });
+  } catch (error) {
+    console.warn('Ingest rate-limit check failed open:', error);
+  }
+
+  return null;
+}
+
+async function buildRateLimitKey(request) {
+  const authorization = request.headers.get('Authorization') || '';
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  const identifier = bearer || request.headers.get('CF-Connecting-IP') || 'unknown';
+  const bytes = new TextEncoder().encode(identifier);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
 async function createProposals(request, env) {
@@ -370,7 +419,7 @@ async function approveCreateRecordProposal(env, proposal, body, approval) {
     }, 409);
   }
 
-  const record = buildRecordForCreate(proposal, body?.record || {});
+  const record = buildRecordForCreate(proposal);
   if (!record.ok) {
     return await markProposalNeedsReview(env, proposal, {
       agentConfidence,
@@ -396,16 +445,44 @@ async function attachStoryAndApplyProposal(env, proposal, targetRecordId, option
   const storyId = proposal.proposed_story_id || createStoryId();
   const bodyText = normalizeText(proposal.extracted_text || '');
 
-  await env.DB.prepare(
-    `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-     VALUES (?, ?, ?, ?, ?)`
-  ).bind(
-    storyId,
-    targetRecordId,
-    proposal.normalized_url,
-    bodyText.length >= 320 ? bodyText.slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
-    null
-  ).run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(
+      storyId,
+      targetRecordId,
+      proposal.normalized_url,
+      proposal.normalized_url,
+      bodyText.length >= 320 ? bodyText.slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
+      null
+    ).run();
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      const duplicate = await findExistingStoryByUrl(env, proposal.normalized_url, proposal.url);
+      const updated = await updateProposalStatus(env, proposal.id, {
+        status: STATUS_DUPLICATE,
+        agentConfidence: options.agentConfidence,
+        agentReason: options.agentReason,
+        agentDecision: 'approve',
+        decision: {
+          duplicate_story_id: duplicate?.id || null,
+          duplicate_record_id: duplicate?.record_id || null,
+          duplicate_url: duplicate?.url || proposal.normalized_url
+        },
+        error: null
+      });
+
+      return jsonResponse({
+        success: false,
+        status: STATUS_DUPLICATE,
+        proposal: serializeProposalRow(updated),
+        duplicate
+      }, 409);
+    }
+
+    throw error;
+  }
 
   let summaryQueue = { queued: false, reason: 'queue_not_configured' };
   try {
@@ -523,6 +600,11 @@ async function createProposalForUrl(env, rawUrl) {
     return serializeProposalRow(proposal);
   }
 
+  const activeProposal = await findActiveProposalByUrl(env, normalizedUrl);
+  if (activeProposal) {
+    return serializeProposalRow(activeProposal);
+  }
+
   const source = await fetchSourceContent(normalizedUrl);
   const facts = await extractIncidentFacts(env, normalizedUrl, source);
   const candidates = await findCandidateRecords(env, facts, source);
@@ -605,32 +687,42 @@ async function insertProposal(env, input) {
   const id = createProposalId();
   const nowIso = new Date().toISOString();
 
-  await env.DB.prepare(
-    `INSERT INTO story_ingest_proposals (
-       id, url, normalized_url, status, proposed_action, proposed_record_id,
-       proposed_story_id, worker_confidence, worker_reason, extracted_title,
-       extracted_text, extracted_facts_json, decision_json, error,
-       created_at, updated_at
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    id,
-    input.url || input.normalizedUrl,
-    input.normalizedUrl,
-    input.status,
-    input.proposedAction || null,
-    input.proposedRecordId || null,
-    input.proposedStoryId || null,
-    Number.isFinite(Number(input.workerConfidence)) ? clamp(Number(input.workerConfidence), 0, 1) : null,
-    input.workerReason ? String(input.workerReason).slice(0, MAX_REASON_CHARS) : null,
-    input.extractedTitle ? String(input.extractedTitle).slice(0, MAX_TITLE_CHARS) : null,
-    input.extractedText ? String(input.extractedText).slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
-    JSON.stringify(input.extractedFacts || null),
-    JSON.stringify(input.decision || null),
-    input.error ? String(input.error).slice(0, MAX_REASON_CHARS) : null,
-    nowIso,
-    nowIso
-  ).run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO story_ingest_proposals (
+         id, url, normalized_url, status, proposed_action, proposed_record_id,
+         proposed_story_id, worker_confidence, worker_reason, extracted_title,
+         extracted_text, extracted_facts_json, decision_json, error,
+         created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id,
+      input.url || input.normalizedUrl,
+      input.normalizedUrl,
+      input.status,
+      input.proposedAction || null,
+      input.proposedRecordId || null,
+      input.proposedStoryId || null,
+      Number.isFinite(Number(input.workerConfidence)) ? clamp(Number(input.workerConfidence), 0, 1) : null,
+      input.workerReason ? String(input.workerReason).slice(0, MAX_REASON_CHARS) : null,
+      input.extractedTitle ? String(input.extractedTitle).slice(0, MAX_TITLE_CHARS) : null,
+      input.extractedText ? String(input.extractedText).slice(0, MAX_EXTRACTED_TEXT_CHARS) : null,
+      JSON.stringify(input.extractedFacts || null),
+      JSON.stringify(input.decision || null),
+      input.error ? String(input.error).slice(0, MAX_REASON_CHARS) : null,
+      nowIso,
+      nowIso
+    ).run();
+  } catch (error) {
+    if (isUniqueConstraintError(error) && input.normalizedUrl) {
+      const existing = await findActiveProposalByUrl(env, input.normalizedUrl);
+      if (existing) {
+        return existing;
+      }
+    }
+    throw error;
+  }
 
   return await getProposal(env, id);
 }
@@ -660,7 +752,7 @@ function buildProposedNewRecord(facts, source, env) {
   const deaths = nullableNumber(facts.deaths);
   const injuries = nullableNumber(facts.injuries);
 
-  if (!source.text || !year || !city || !province) {
+  if (!source.text || !year || !city || !isCanadianProvinceCode(province)) {
     return null;
   }
 
@@ -699,7 +791,7 @@ function buildProposedNewRecord(facts, source, env) {
   };
 }
 
-function buildRecordForCreate(proposal, overrides = {}) {
+function buildRecordForCreate(proposal) {
   const decision = parseJsonObject(proposal.decision_json) || {};
   const proposedRecord = decision.proposed_record || null;
   if (!proposedRecord || typeof proposedRecord !== 'object') {
@@ -711,11 +803,7 @@ function buildRecordForCreate(proposal, overrides = {}) {
     return { ok: false, error: 'Create-record proposal has an invalid record ID.' };
   }
 
-  const merged = {
-    ...proposedRecord,
-    ...pickRecordOverrides(overrides),
-    id: recordId
-  };
+  const merged = { ...proposedRecord, id: recordId };
 
   const recordDate = normalizeRecordDate(merged.date) || normalizeYear(merged.date);
   if (!recordDate) {
@@ -727,7 +815,7 @@ function buildRecordForCreate(proposal, overrides = {}) {
   const victims = nullableNumber(merged.victims);
   const deaths = nullableNumber(merged.deaths);
 
-  if (!city || !province) {
+  if (!city || !isCanadianProvinceCode(province)) {
     return { ok: false, error: 'New record requires city and province.' };
   }
 
@@ -756,36 +844,6 @@ function buildRecordForCreate(proposal, overrides = {}) {
       ai_summary: null
     }
   };
-}
-
-function pickRecordOverrides(overrides) {
-  if (!overrides || typeof overrides !== 'object') {
-    return {};
-  }
-
-  const allowed = [
-    'date',
-    'name',
-    'city',
-    'province',
-    'licensed',
-    'victims',
-    'deaths',
-    'injuries',
-    'suicide',
-    'devices_used',
-    'firearms',
-    'possessed_legally',
-    'warnings',
-    'oic_impact'
-  ];
-  const picked = {};
-  for (const key of allowed) {
-    if (overrides[key] !== undefined) {
-      picked[key] = overrides[key];
-    }
-  }
-  return picked;
 }
 
 async function insertRecord(env, record) {
@@ -976,28 +1034,75 @@ async function getProposal(env, proposalId) {
 }
 
 async function findExistingStoryByUrl(env, normalizedUrl, rawUrl) {
-  const candidates = Array.from(new Set([normalizedUrl, rawUrl].filter(Boolean)));
+  const candidates = buildUrlLookupVariants(normalizedUrl, rawUrl);
   if (candidates.length === 0) {
     return null;
   }
 
-  if (candidates.length === 1) {
-    return await env.DB.prepare(
-      `SELECT ns.id, ns.record_id, ns.url, r.name AS record_name
-       FROM news_stories ns
-       LEFT JOIN records r ON r.id = ns.record_id
-       WHERE ns.url = ?
-       LIMIT 1`
-    ).bind(candidates[0]).first();
-  }
+  const placeholders = candidates.map(() => '?').join(', ');
 
   return await env.DB.prepare(
     `SELECT ns.id, ns.record_id, ns.url, r.name AS record_name
      FROM news_stories ns
      LEFT JOIN records r ON r.id = ns.record_id
-     WHERE ns.url = ? OR ns.url = ?
+     WHERE ns.canonical_url IN (${placeholders}) OR ns.url IN (${placeholders})
      LIMIT 1`
-  ).bind(candidates[0], candidates[1]).first();
+  ).bind(...candidates, ...candidates).first();
+}
+
+function buildUrlLookupVariants(...urls) {
+  const variants = new Set();
+
+  for (const input of urls) {
+    if (!input) continue;
+
+    const raw = String(input).trim();
+    if (!raw) continue;
+
+    addUrlVariant(variants, raw);
+
+    const validated = validateAndNormalizePublicHttpUrl(raw);
+    if (validated.ok && validated.url) {
+      addUrlVariant(variants, validated.url);
+    }
+  }
+
+  return Array.from(variants).slice(0, 8);
+}
+
+function addUrlVariant(variants, value) {
+  variants.add(value);
+
+  try {
+    const parsed = new URL(value);
+    parsed.hash = '';
+    variants.add(parsed.toString());
+
+    if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+      variants.add(parsed.toString());
+    } else if (parsed.pathname.length > 1) {
+      parsed.pathname = `${parsed.pathname}/`;
+      variants.add(parsed.toString());
+    }
+  } catch {
+    // Keep the raw string variant only.
+  }
+}
+
+async function findActiveProposalByUrl(env, normalizedUrl) {
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  return await env.DB.prepare(
+    `SELECT *
+     FROM story_ingest_proposals
+     WHERE normalized_url = ?
+       AND status IN (?, ?)
+     ORDER BY created_at DESC
+     LIMIT 1`
+  ).bind(normalizedUrl, STATUS_WORKER_PROPOSED, STATUS_NEEDS_REVIEW).first();
 }
 
 async function findRecordForIngest(env, recordId) {
@@ -1618,14 +1723,19 @@ function heuristicFacts(source) {
 
 async function fetchSourceContent(url) {
   try {
-    const response = await fetch(url, {
-      redirect: 'follow',
+    const fetched = await safeFetchPublicText(url, {
+      maxBytes: MAX_SOURCE_FETCH_BYTES,
       headers: {
         'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)',
         'Accept': 'text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.9, text/plain;q=0.8, */*;q=0.7'
       }
     });
 
+    if (!fetched.ok) {
+      return makeSource('', '', 'fetch_error', fetched.error || 'Fetch failed');
+    }
+
+    const { response, text: raw } = fetched;
     if (!response.ok) {
       return makeSource('', '', 'http_error', `Fetch failed with status ${response.status}`);
     }
@@ -1640,7 +1750,6 @@ async function fetchSourceContent(url) {
       return makeSource('', '', 'binary_content', `Unsupported content type: ${contentType}`);
     }
 
-    const raw = await response.text();
     if (contentType.includes('text/markdown') || contentType.includes('text/plain')) {
       const text = normalizeText(cleanMarkdownServiceOutput(raw));
       return makeSource(extractTitleFromText(text), text, 'text');
@@ -2049,25 +2158,20 @@ function extractAiText(result) {
 function parseJsonObject(rawText) {
   if (!rawText) return null;
 
-  const stripped = String(rawText)
-    .replace(/```json\s*/gi, '')
-    .replace(/```\s*/g, '')
-    .trim();
+  const stripped = stripJsonFence(rawText);
 
   try {
-    return JSON.parse(stripped);
-  } catch {
-    // Continue to object extraction fallback.
-  }
-
-  const match = stripped.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-
-  try {
-    return JSON.parse(match[0]);
+    const parsed = JSON.parse(stripped);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+function stripJsonFence(rawText) {
+  const text = String(rawText || '').trim();
+  const match = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return (match ? match[1] : text).trim();
 }
 
 function safeJsonParse(raw) {
@@ -2573,7 +2677,7 @@ function normalizeProvince(value) {
     NUNAVUT: 'NU'
   };
 
-  if (/^[A-Z]{2,3}$/.test(text)) return text;
+  if (/^[A-Z]{2,3}$/.test(text)) return isCanadianProvinceCode(text) ? text : '';
   return aliases[text] || '';
 }
 
@@ -2673,16 +2777,27 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+function isUniqueConstraintError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('unique constraint') || message.includes('constraint failed') || message.includes('unique');
+}
+
 function isMissingIngestSchemaError(error) {
   const message = String(error?.message || '').toLowerCase();
-  return message.includes('no such table: story_ingest_proposals');
+  return (
+    message.includes('no such table: story_ingest_proposals') ||
+    message.includes('no such column: ns.canonical_url') ||
+    message.includes('no such column: canonical_url')
+  );
 }
 
 export const __test = {
+  buildUrlLookupVariants,
   candidateHardFieldsCompatible,
   deriveEventDateFromSource,
   extractSourceFromHtml,
   normalizeIncidentDate,
+  parseJsonObject,
   parseRecordSearchParams,
   scoreRecordCandidate,
   searchRecordCandidates,

@@ -96,7 +96,7 @@ All endpoints require admin authentication (session cookie).
 These endpoints accept either an admin session cookie or `Authorization: Bearer <INGEST_API_TOKEN>`.
 
 - `POST /admin/api/ingest/proposals`
-  - creates Worker proposals for one `url` or up to 20 `urls`
+  - creates Worker proposals for one `url` or up to 5 `urls`
 - `GET /admin/api/ingest/proposals`
   - lists proposals, optionally filtered by `status`
 - `GET /admin/api/ingest/proposals/:id`

@@ -136,11 +136,20 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ All IDs validated (records, stories) - format: alphanumeric, hyphens, underscores (UUIDs supported)
 - ✅ URLs validated using `new URL()` constructor
 - ✅ Public URL-only policy blocks localhost and private/local IP ranges
+- ✅ Source fetches use manual redirect validation, DNS checks, timeout, and response-size caps
 - ✅ Year validation: 4-digit format, min/max constraints
 - ✅ Input trimming applied to all text inputs
 - ✅ Array length limits enforced (100 stories max)
-- ✅ Agent ingestion batch limits enforced (20 URLs max)
+- ✅ Agent ingestion batch limits enforced (5 URLs max)
+- ✅ Agent ingestion has a Worker-side KV rate limiter when `AUTH_TOKENS` is configured
 - ✅ Required fields validated before database operations
+
+### Third-Party Source Extraction
+
+- Direct source fetches run inside Cloudflare Workers.
+- Optional summarize-daemon extraction is used only when `AI_FETCH_SUMMARIZE_DAEMON_URL` is configured.
+- `r.jina.ai` and `markdown.new` fallbacks are disabled by default (`AI_FETCH_JINA_FALLBACK=false`, `AI_FETCH_MARKDOWN_NEW_FALLBACK=false`).
+- Enabling third-party extraction fallbacks may disclose source URLs, and depending on provider behavior, extracted article text to those services.
 
 ### Output Security
 

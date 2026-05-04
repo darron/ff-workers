@@ -63,10 +63,11 @@ tasks:
     silent: true
     cmds:
       - >
+        tmp="$(mktemp /private/tmp/ff-workers-staging-ingest-token.XXXXXX)" &&
+        chmod 600 "$tmp" &&
         token="$(openssl rand -hex 32)" &&
-        : > "{{.STAGING_INGEST_TOKEN_FILE}}" &&
-        chmod 600 "{{.STAGING_INGEST_TOKEN_FILE}}" &&
-        printf '%s' "$token" > "{{.STAGING_INGEST_TOKEN_FILE}}" &&
+        printf '%s' "$token" > "$tmp" &&
+        mv "$tmp" "{{.STAGING_INGEST_TOKEN_FILE}}" &&
         printf '%s' "$token" | npx wrangler secret put INGEST_API_TOKEN --env staging &&
         printf 'Rotated staging ingest token and stored it at {{.STAGING_INGEST_TOKEN_FILE}}\n'
 

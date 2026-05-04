@@ -108,6 +108,7 @@ export async function handleAdminAPI(request, env, path, method) {
     }
   } catch (error) {
     console.error('Admin API error:', error);
+    Sentry.captureException(error, { tags: { area: 'admin-api' } });
     return new Response(JSON.stringify({ error: 'Internal server error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -437,11 +438,12 @@ async function createRecord(request, env) {
           
           try {
             await env.DB.prepare(
-              `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-               VALUES (?, ?, ?, ?, ?)`
+              `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+               VALUES (?, ?, ?, ?, ?, ?)`
             ).bind(
               story.id,
               body.id,
+              story.url || null,
               story.url || null,
               story.body_text || null,
               story.ai_summary || null
@@ -616,8 +618,9 @@ async function updateRecord(request, env, id) {
         if (existing) {
           // Update existing story
           await env.DB.prepare(
-            `UPDATE news_stories SET url = ?, body_text = ?, ai_summary = ? WHERE id = ?`
+            `UPDATE news_stories SET url = ?, canonical_url = ?, body_text = ?, ai_summary = ? WHERE id = ?`
           ).bind(
+            story.url || null,
             story.url || null,
             story.body_text || null,
             story.ai_summary || null,
@@ -626,11 +629,12 @@ async function updateRecord(request, env, id) {
         } else {
           // Insert new story
           await env.DB.prepare(
-            `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-             VALUES (?, ?, ?, ?, ?)`
+            `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+             VALUES (?, ?, ?, ?, ?, ?)`
           ).bind(
             story.id,
             id,
+            story.url || null,
             story.url || null,
             story.body_text || null,
             story.ai_summary || null
@@ -786,11 +790,12 @@ async function createStory(request, env) {
   
   try {
     await env.DB.prepare(
-      `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+       VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(
       body.id,
       body.record_id,
+      body.url || null,
       body.url || null,
       body.body_text || null,
       body.ai_summary || null
@@ -814,7 +819,7 @@ async function createStory(request, env) {
     });
   } catch (error) {
     if (error.message.includes('UNIQUE') || error.message.includes('unique')) {
-      return new Response(JSON.stringify({ error: 'Story with this ID already exists' }), {
+      return new Response(JSON.stringify({ error: 'Story with this ID or URL already exists' }), {
         status: 409,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -885,6 +890,7 @@ async function updateStory(request, env, id) {
   const fields = {
     record_id: body.record_id,
     url: body.url,
+    canonical_url: body.url === undefined ? undefined : body.url || null,
     body_text: body.body_text,
     ai_summary: body.ai_summary
   };

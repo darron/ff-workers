@@ -56,6 +56,9 @@ Optional confidence thresholds:
 - `INGEST_WORKER_MIN_CONFIDENCE`, default `0.65`
 - `INGEST_AGENT_MIN_CONFIDENCE`, default `0.65`
 - `INGEST_AI_MODEL`, default falls back to `AI_MODEL`
+- `INGEST_RATE_LIMIT_PER_MINUTE`, default `60` when `AUTH_TOKENS` KV is configured
+
+Source fetches use public-URL validation, manual redirect checks, DNS checks, timeouts, and response-size caps. Third-party extraction fallbacks for summaries are disabled by default; enabling them can disclose source URLs to those services.
 
 ## Auth
 
@@ -87,7 +90,7 @@ Batch mode:
 }
 ```
 
-Maximum batch size is 20.
+Maximum batch size is 5.
 
 Important response fields:
 
@@ -156,23 +159,17 @@ Matching uses the article's extracted event/death/incident date when available:
 - publication/update dates do not boost existing-record matching
 - new-record drafts use the extracted event date when available, otherwise the best supported year
 
-For new-record proposals, the agent may include a `record` object with narrow field overrides:
+For new-record proposals, bearer-token approval does not accept record-field overrides. The Worker creates the reviewed `decision.proposed_record` as-is when the agent approves the Worker-proposed record ID.
 
 ```json
 {
   "record_id": "worker-proposed-record-uuid",
   "agent_confidence": 0.92,
-  "agent_reason": "The source describes a new Calgary incident with two child deaths.",
-  "record": {
-    "date": "2026",
-    "name": "Corrected display name",
-    "city": "Calgary",
-    "province": "AB",
-    "victims": 2,
-    "deaths": 2
-  }
+  "agent_reason": "The source describes a new Calgary incident with two child deaths."
 }
 ```
+
+Field corrections should go through the admin UI or a future reviewed `record_patch` proposal flow.
 
 ## Reject Proposal
 
@@ -216,9 +213,10 @@ The remote agent should:
 
 ## Production Rollout Checklist
 
-- Apply `0004_ingest_proposals.sql` to production D1.
+- Apply `0004_ingest_proposals.sql`, `0005_story_canonical_urls.sql`, and `0006_story_canonical_url_backfill.sql` to production D1.
 - Set `INGEST_API_TOKEN` or `INGEST_API_TOKENS` in production.
 - Consider stricter launch thresholds, for example `INGEST_WORKER_MIN_CONFIDENCE=0.75` and `INGEST_CREATE_RECORD_MIN_CONFIDENCE=0.8`.
+- Add a Cloudflare WAF/rate-limit rule for `/admin/api/ingest/*` in addition to the Worker-side KV limiter.
 - Smoke test duplicate, existing-record attach, new-record create, reject, and structured search paths in staging first.
 - Add or explicitly defer a reviewed `record_patch` proposal flow for metadata updates from later reporting, such as changing `name` from `Unknown` after police release an accused person's name.
 - Review `needs_review` proposals before enabling broad remote-agent usage.

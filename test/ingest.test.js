@@ -139,3 +139,22 @@ test('record search validates required filters and ranks structured candidates',
   assert.ok(candidates[0].reasons.includes('city'));
   assert.ok(candidates[0].reasons.includes('province'));
 });
+
+test('model JSON parsing accepts only strict object JSON or a full fenced object', () => {
+  assert.deepEqual(__test.parseJsonObject('{"record_id":null,"confidence":0.2}'), {
+    record_id: null,
+    confidence: 0.2
+  });
+  assert.deepEqual(__test.parseJsonObject('```json\n{"ok":true}\n```'), { ok: true });
+  assert.equal(__test.parseJsonObject('prefix {"ok":true} suffix'), null);
+  assert.equal(__test.parseJsonObject('[{"ok":true}]'), null);
+});
+
+test('URL duplicate lookup includes canonical and trailing slash variants', () => {
+  const variants = __test.buildUrlLookupVariants(
+    'https://www.ctvnews.ca/story/?utm_source=codex#section'
+  );
+
+  assert.ok(variants.includes('https://www.ctvnews.ca/story'));
+  assert.ok(variants.includes('https://www.ctvnews.ca/story/'));
+});
