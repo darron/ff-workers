@@ -129,6 +129,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ Secure cookies: `HttpOnly`, `SameSite=Strict`, 24-hour expiration
 - ✅ Password hashing: PBKDF2 (salted, configurable iterations)
 - ✅ Passwords stored as Cloudflare secrets (not in code)
+- ✅ Remote agent ingestion uses separate bearer token secrets scoped only to `/admin/api/ingest/*`
 
 ### Input Validation
 
@@ -138,6 +139,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ Year validation: 4-digit format, min/max constraints
 - ✅ Input trimming applied to all text inputs
 - ✅ Array length limits enforced (100 stories max)
+- ✅ Agent ingestion batch limits enforced (20 URLs max)
 - ✅ Required fields validated before database operations
 
 ### Output Security
@@ -153,6 +155,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ No string concatenation in SQL queries
 - ✅ Dynamic UPDATE queries use hardcoded field names (not user input)
 - ✅ All IDs validated before use in queries
+- ✅ Agent ingestion writes are proposal-gated, deduplicated, and audited in `story_ingest_proposals`
 
 ### DoS Protection
 
@@ -204,6 +207,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 2. **`/admin/api/*`** - All REST API endpoints
    - Protected by `requireAuth()` middleware
    - Returns 401 Unauthorized if not authenticated
+   - `/admin/api/ingest/*` also accepts scoped bearer tokens for remote agents
 
 ### ✅ Public Routes (Correctly Unprotected)
 

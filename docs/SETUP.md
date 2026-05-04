@@ -94,6 +94,13 @@ npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env staging
 npx wrangler secret put AI_FETCH_SUMMARIZE_DAEMON_TOKEN --env production
 ```
 
+Optional agent ingestion token:
+
+```bash
+npx wrangler secret put INGEST_API_TOKEN --env staging
+npx wrangler secret put INGEST_API_TOKEN --env production
+```
+
 ## Queue Setup
 
 Create queues once (recommended with latest Wrangler):
@@ -123,6 +130,7 @@ Core tables:
 
 - `records`
 - `news_stories`
+- `story_ingest_proposals`
 - `admin_sessions` (D1 fallback session store if KV unavailable)
 
 ## Deployment Workflows

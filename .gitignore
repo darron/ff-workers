@@ -4,6 +4,14 @@ dist/
 .DS_Store
 *.log
 .envrc
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+*.p12
+*.pfx
 # Local development secrets (automatically loaded by Wrangler)
 .dev.vars
-
+.dev.vars.*

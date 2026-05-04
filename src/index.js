@@ -215,6 +215,11 @@ async function handleAdminRoutes(request, env, path, method) {
     });
   }
 
+  // Machine-ingest API supports bearer-token auth inside handleAdminAPI.
+  if (path.startsWith('/admin/api/ingest/')) {
+    return await handleAdminAPI(request, env, path, method);
+  }
+
   // Check authentication for other admin routes
   const authenticated = await isAuthenticated(request, env);
   if (!authenticated) {

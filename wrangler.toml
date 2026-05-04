@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # Admin password hash (PBKDF2) - generate with: node generate-password-hash.js "your-password"
 # For production, use: npx wrangler secret put ADMIN_PASSWORD_HASH
+# For remote agent ingestion, use: npx wrangler secret put INGEST_API_TOKEN
 # For local development, uncomment the line below (but don't commit it to git!)
 # ADMIN_PASSWORD_HASH = "paste-your-hash-here-for-local-dev-only"
 

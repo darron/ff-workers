@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "test": "node --test",
     "deploy": "wrangler deploy",
     "migrate": "wrangler d1 migrations apply massmurdercanada",
     "deploy:production:sentry": "./scripts/deploy-production-with-sentry.sh"

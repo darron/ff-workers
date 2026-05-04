@@ -7,6 +7,7 @@ This folder contains all project documentation.
 ### Setup & Configuration
 - **[SETUP.md](./SETUP.md)** - Local/staging/production setup, queues, deploy workflows, and Sentry release deploy flow
 - **[ADMIN_SETUP.md](./ADMIN_SETUP.md)** - Admin authentication, dashboard operations, AI queue APIs, and Sentry test endpoint
+- **[INGESTION.md](./INGESTION.md)** - Bearer-token agent ingestion flow for proposing and approving story URLs
 - **[NVM_GUIDE.md](./NVM_GUIDE.md)** - Node.js version management using nvm
 
 ### Security

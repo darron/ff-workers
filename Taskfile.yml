@@ -1,0 +1,172 @@
+version: '3'
+
+vars:
+  STAGING_BASE_URL: https://massmurdercanada-staging.darron.workers.dev
+  STAGING_INGEST_TOKEN_FILE: /private/tmp/ff-workers-staging-ingest-token
+  LOCAL_AGENT_CONFIDENCE:
+    sh: printf '%s' "$AGENT_CONFIDENCE"
+  LOCAL_AGENT_REASON:
+    sh: printf '%s' "$AGENT_REASON"
+  LOCAL_INGEST_API_TOKEN:
+    sh: if test -n "$INGEST_API_TOKEN"; then printf '%s' "$INGEST_API_TOKEN"; elif test -r /private/tmp/ff-workers-staging-ingest-token; then cat /private/tmp/ff-workers-staging-ingest-token; fi
+  LOCAL_INGEST_TEST_URL:
+    sh: printf '%s' "$INGEST_TEST_URL"
+  LOCAL_PROPOSAL_ID:
+    sh: printf '%s' "$PROPOSAL_ID"
+  LOCAL_RECORD_ID:
+    sh: printf '%s' "$RECORD_ID"
+  LOCAL_SEARCH_QUERY:
+    sh: printf '%s' "$SEARCH_QUERY"
+
+tasks:
+  staging:deploy:
+    desc: Deploy the Worker to the staging Cloudflare environment only.
+    cmds:
+      - npx wrangler deploy --env staging
+
+  staging:migrate:
+    desc: Apply D1 migrations to the staging Cloudflare database only.
+    cmds:
+      - printf 'y\n' | npx wrangler d1 migrations apply massmurdercanada --env staging --remote
+
+  staging:record:delete:
+    desc: Delete one staging record and its attached stories by RECORD_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "$RECORD_ID"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "$RECORD_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - >
+        npx wrangler d1 execute massmurdercanada --env staging --remote
+        --command "DELETE FROM news_stories WHERE record_id = '$RECORD_ID'"
+      - >
+        npx wrangler d1 execute massmurdercanada --env staging --remote
+        --command "DELETE FROM records WHERE id = '$RECORD_ID'"
+
+  staging:secret:ingest-token:
+    desc: Set the staging INGEST_API_TOKEN secret from INGEST_API_TOKEN.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+    cmds:
+      - printf '%s' "$INGEST_API_TOKEN" | npx wrangler secret put INGEST_API_TOKEN --env staging
+
+  staging:secret:rotate-ingest-token:
+    desc: Rotate the staging INGEST_API_TOKEN and store it locally for staging smoke tests.
+    silent: true
+    cmds:
+      - >
+        token="$(openssl rand -hex 32)" &&
+        : > "{{.STAGING_INGEST_TOKEN_FILE}}" &&
+        chmod 600 "{{.STAGING_INGEST_TOKEN_FILE}}" &&
+        printf '%s' "$token" > "{{.STAGING_INGEST_TOKEN_FILE}}" &&
+        printf '%s' "$token" | npx wrangler secret put INGEST_API_TOKEN --env staging &&
+        printf 'Rotated staging ingest token and stored it at {{.STAGING_INGEST_TOKEN_FILE}}\n'
+
+  staging:ingest:create:
+    desc: Create a staging ingest proposal for INGEST_TEST_URL.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "$INGEST_TEST_URL"
+        msg: Pass INGEST_TEST_URL as a task variable.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      INGEST_TEST_URL: "{{.INGEST_TEST_URL | default .LOCAL_INGEST_TEST_URL}}"
+    cmds:
+      - >
+        curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/proposals"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+        -H "Content-Type: application/json"
+        -d "$(jq -cn --arg url "$INGEST_TEST_URL" '{url:$url}')"
+
+  staging:ingest:get:
+    desc: Fetch one staging ingest proposal by PROPOSAL_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "$PROPOSAL_ID"
+        msg: Pass PROPOSAL_ID as a task variable.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      PROPOSAL_ID: "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+    cmds:
+      - >
+        curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/proposals/$PROPOSAL_ID"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  staging:ingest:search:
+    desc: Search staging ingest candidate records with SEARCH_QUERY.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "$SEARCH_QUERY"
+        msg: Pass SEARCH_QUERY as a URL query string, without the leading question mark.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      SEARCH_QUERY: "{{.SEARCH_QUERY | default .LOCAL_SEARCH_QUERY}}"
+    cmds:
+      - >
+        curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/records/search?$SEARCH_QUERY"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  staging:ingest:approve:
+    desc: Approve one staging ingest proposal using PROPOSAL_ID, RECORD_ID, AGENT_CONFIDENCE, and AGENT_REASON.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "$PROPOSAL_ID"
+        msg: Pass PROPOSAL_ID as a task variable.
+      - sh: test -n "$RECORD_ID"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: test -n "$AGENT_CONFIDENCE"
+        msg: Pass AGENT_CONFIDENCE as a task variable.
+      - sh: test -n "$AGENT_REASON"
+        msg: Pass AGENT_REASON as a task variable.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      PROPOSAL_ID: "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+      AGENT_CONFIDENCE: "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
+      AGENT_REASON: "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+    cmds:
+      - >
+        curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/proposals/$PROPOSAL_ID/approve"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+        -H "Content-Type: application/json"
+        -d "$(jq -cn --arg record_id "$RECORD_ID" --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" '{record_id:$record_id,agent_confidence:$agent_confidence,agent_reason:$agent_reason}')"
+
+  staging:ingest:reject:
+    desc: Reject one staging ingest proposal using PROPOSAL_ID, AGENT_CONFIDENCE, and AGENT_REASON.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "$PROPOSAL_ID"
+        msg: Pass PROPOSAL_ID as a task variable.
+      - sh: test -n "$AGENT_CONFIDENCE"
+        msg: Pass AGENT_CONFIDENCE as a task variable.
+      - sh: test -n "$AGENT_REASON"
+        msg: Pass AGENT_REASON as a task variable.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      PROPOSAL_ID: "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+      AGENT_CONFIDENCE: "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
+      AGENT_REASON: "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+    cmds:
+      - >
+        curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/proposals/$PROPOSAL_ID/reject"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+        -H "Content-Type: application/json"
+        -d "$(jq -cn --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" '{agent_confidence:$agent_confidence,agent_reason:$agent_reason}')"
