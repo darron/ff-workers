@@ -1634,7 +1634,7 @@ async function selectCandidateRecord(env, url, source, facts, candidates) {
   const aiReason = normalizeText(aiJson?.reasoning || '').slice(0, MAX_REASON_CHARS);
 
   const aiCandidate = top.find(candidate => candidate.id === aiRecordId);
-  if (aiCandidate && candidateHardFieldsCompatible(aiCandidate, facts)) {
+  if (aiCandidate && candidateHardFieldsCompatible(aiCandidate, facts) && candidateHasStrongAttachEvidence(aiCandidate)) {
     return {
       recordId: aiRecordId,
       confidence: Number.isFinite(aiConfidence) ? aiConfidence : heuristicBest?.score || 0,
@@ -1643,10 +1643,21 @@ async function selectCandidateRecord(env, url, source, facts, candidates) {
   }
 
   return {
-    recordId: heuristicBest?.id || null,
+    recordId: candidateHasStrongAttachEvidence(heuristicBest) ? heuristicBest?.id || null : null,
     confidence: Math.min(heuristicBest?.score || 0, 0.6),
-    reason: aiReason || 'AI did not select a confident matching record.'
+    reason: aiReason || 'AI did not select a confident matching record with strong incident evidence.'
   };
+}
+
+function candidateHasStrongAttachEvidence(candidate) {
+  const reasons = new Set(candidate?.reasons || []);
+  return (
+    reasons.has('event_date') ||
+    reasons.has('near_event_date') ||
+    reasons.has('year_from_event_date') ||
+    reasons.has('name') ||
+    reasons.has('name_in_source')
+  );
 }
 
 function candidateHardFieldsCompatible(candidate, facts) {
@@ -3012,6 +3023,7 @@ export const __test = {
   approveProposal,
   buildUrlLookupVariants,
   candidateHardFieldsCompatible,
+  candidateHasStrongAttachEvidence,
   deriveEventDateFromSource,
   extractSourceFromHtml,
   fetchSourceContent,

@@ -90,6 +90,24 @@ test('hard candidate compatibility rejects location and count conflicts', () => 
   }), false);
 });
 
+test('attach candidates require strong incident evidence beyond city and counts', () => {
+  assert.equal(__test.candidateHasStrongAttachEvidence({
+    reasons: ['province', 'city', 'victims', 'deaths']
+  }), false);
+
+  assert.equal(__test.candidateHasStrongAttachEvidence({
+    reasons: ['year_from_event_date', 'province', 'city', 'victims', 'deaths']
+  }), true);
+
+  assert.equal(__test.candidateHasStrongAttachEvidence({
+    reasons: ['province', 'city', 'name_in_source', 'victims', 'deaths']
+  }), true);
+
+  assert.equal(__test.candidateHasStrongAttachEvidence({
+    reasons: ['province', 'city', 'victims', 'deaths', 'devices']
+  }), false);
+});
+
 test('record search validates required filters and ranks structured candidates', () => {
   const empty = __test.parseRecordSearchParams(new URLSearchParams());
   assert.equal(empty.ok, false);
