@@ -34,7 +34,7 @@ Always use the proposal flow:
 ## Create Proposal
 
 ```bash
-curl -s "$BASE_URL/admin/api/ingest/proposals" \
+curl -s "$MMC_BASE_URL/admin/api/ingest/proposals" \
   -H "Authorization: Bearer $INGEST_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/article"}'
@@ -74,7 +74,7 @@ Approve only `worker_proposed` proposals.
 Use read-only search when the Worker proposes `create_record`, when candidate evidence is thin, or when you need to verify whether a nearby existing incident already exists.
 
 ```bash
-curl -s "$BASE_URL/admin/api/ingest/records/search?city=Calgary&province=AB&date=2026-04-29&victims=2&deaths=2" \
+curl -s "$MMC_BASE_URL/admin/api/ingest/records/search?city=Calgary&province=AB&date=2026-04-29&victims=2&deaths=2" \
   -H "Authorization: Bearer $INGEST_API_TOKEN"
 ```
 
@@ -139,7 +139,7 @@ For `proposed_action: "attach_to_record"`, the ID must already exist.
 For `proposed_action: "create_record"`, the ID is the new record UUID the Worker will create if approved. Review `decision.proposed_record` carefully before approving.
 
 ```bash
-curl -s "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/approve" \
+curl -s "$MMC_BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/approve" \
   -H "Authorization: Bearer $INGEST_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -170,7 +170,7 @@ For `create_record`, do not send `record` field overrides. Approve the Worker-pr
 Reject only clear mismatches.
 
 ```bash
-curl -s "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/reject" \
+curl -s "$MMC_BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/reject" \
   -H "Authorization: Bearer $INGEST_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -182,14 +182,14 @@ curl -s "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/reject" \
 ## Review Existing Proposal
 
 ```bash
-curl -s "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID" \
+curl -s "$MMC_BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID" \
   -H "Authorization: Bearer $INGEST_API_TOKEN"
 ```
 
 List proposals requiring human review:
 
 ```bash
-curl -s "$BASE_URL/admin/api/ingest/proposals?status=needs_review&limit=25" \
+curl -s "$MMC_BASE_URL/admin/api/ingest/proposals?status=needs_review&limit=25" \
   -H "Authorization: Bearer $INGEST_API_TOKEN"
 ```
 
