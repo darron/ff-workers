@@ -605,7 +605,7 @@ async function createProposalForUrl(env, rawUrl) {
     return serializeProposalRow(activeProposal);
   }
 
-  const source = await fetchSourceContent(rawUrl || normalizedUrl);
+  const source = await fetchSourceContent(rawUrl || normalizedUrl, env);
   const facts = await extractIncidentFacts(env, normalizedUrl, source);
   const candidates = await findCandidateRecords(env, facts, source);
   const selected = await selectCandidateRecord(env, normalizedUrl, source, facts, candidates);
@@ -1646,9 +1646,12 @@ async function extractIncidentFacts(env, url, source) {
   const sourceText = [source.title, source.text].filter(Boolean).join(' ');
   const aiIncidentDate = normalizeIncidentDate(aiJson.incident_date, sourceText);
   const derivedIncidentDate = deriveEventDateFromSource(sourceText, source.publishedAt);
-  const incidentDate = aiIncidentDate && sourceSupportsExactDate(aiIncidentDate, sourceText, source.publishedAt)
-    ? aiIncidentDate
-    : derivedIncidentDate;
+  const publishedDate = dateOnlyFromTimestamp(source.publishedAt);
+  const incidentDate = derivedIncidentDate && (!aiIncidentDate || aiIncidentDate === publishedDate)
+    ? derivedIncidentDate
+    : aiIncidentDate && sourceSupportsExactDate(aiIncidentDate, sourceText, source.publishedAt)
+      ? aiIncidentDate
+      : derivedIncidentDate;
   const aiDateBasis = normalizeDateBasis(aiJson.date_basis);
   const pubYear = extractYearOnly(source.publishedAt);
   const rawAiYear = normalizeYear(aiJson.year) || normalizeYear(aiIncidentDate);
@@ -1721,7 +1724,31 @@ function heuristicFacts(source) {
   };
 }
 
-async function fetchSourceContent(url) {
+async function fetchSourceContent(url, env = {}) {
+  let best = await fetchDirectSourceContent(url);
+
+  if (!shouldTrySourceFallback(best)) {
+    return best;
+  }
+
+  if (isJinaFallbackEnabled(env)) {
+    const source = await fetchViaJinaReaderSource(url);
+    if (isBetterSource(source, best)) {
+      best = source;
+    }
+  }
+
+  if (isMarkdownNewFallbackEnabled(env) && shouldTrySourceFallback(best)) {
+    const source = await fetchViaMarkdownNewSource(url);
+    if (isBetterSource(source, best)) {
+      best = source;
+    }
+  }
+
+  return best;
+}
+
+async function fetchDirectSourceContent(url) {
   try {
     const fetched = await safeFetchPublicText(url, {
       maxBytes: MAX_SOURCE_FETCH_BYTES,
@@ -1765,6 +1792,127 @@ async function fetchSourceContent(url) {
     console.error('Failed to fetch ingest source:', error);
     return makeSource('', '', 'fetch_error', error?.message || 'Fetch failed');
   }
+}
+
+async function fetchViaJinaReaderSource(url) {
+  try {
+    const proxyUrl = `https://r.jina.ai/${url}`;
+    const fetched = await safeFetchPublicText(proxyUrl, {
+      maxBytes: MAX_SOURCE_FETCH_BYTES,
+      headers: {
+        'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)'
+      }
+    });
+
+    if (!fetched.ok || !fetched.response?.ok) {
+      return null;
+    }
+
+    const publishedAt = extractPublishedAtFromFallbackText(fetched.text);
+    const text = normalizeText(cleanMarkdownServiceOutput(fetched.text));
+    return makeSource(extractTitleFromText(text), text, 'jina_reader', '', publishedAt);
+  } catch (error) {
+    console.error(`Failed jina reader ingest fallback for ${url}:`, error);
+    return null;
+  }
+}
+
+async function fetchViaMarkdownNewSource(url) {
+  try {
+    const fetched = await safeFetchPublicText('https://markdown.new/', {
+      method: 'POST',
+      maxBytes: MAX_SOURCE_FETCH_BYTES,
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)'
+      },
+      body: JSON.stringify({
+        url,
+        method: 'auto',
+        retain_images: false
+      })
+    });
+
+    if (!fetched.ok || !fetched.response?.ok) {
+      return null;
+    }
+
+    const parsed = parseMarkdownNewResponse(fetched.text);
+    const text = normalizeText(cleanMarkdownServiceOutput(parsed.content || fetched.text));
+    const publishedAt = parsed.publishedAt || extractPublishedAtFromFallbackText(parsed.content || fetched.text);
+    return makeSource(parsed.title || extractTitleFromText(text), text, 'markdown_new', '', publishedAt);
+  } catch (error) {
+    console.error(`Failed markdown.new ingest fallback for ${url}:`, error);
+    return null;
+  }
+}
+
+function parseMarkdownNewResponse(rawText) {
+  const fallbackText = String(rawText || '');
+  try {
+    const parsed = JSON.parse(fallbackText);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        title: normalizeText(parsed.title || ''),
+        content: String(parsed.content || parsed.markdown || parsed.text || ''),
+        publishedAt: normalizeText(parsed.published_at || parsed.publishedAt || parsed.datePublished || '')
+      };
+    }
+  } catch {
+    // Treat non-JSON responses as plain markdown.
+  }
+
+  return { title: '', content: fallbackText };
+}
+
+function extractPublishedAtFromFallbackText(text) {
+  const source = String(text || '');
+  const jsonDate = source.match(/"datePublished"\s*:\s*"([^"]+)"/i);
+  if (jsonDate) {
+    return normalizeText(jsonDate[1]);
+  }
+
+  const posted = source.match(/\bPosted:\s*([A-Z][a-z]+\.?\s+\d{1,2},\s+\d{4}[^|\n]*)/);
+  return posted ? normalizeText(posted[1]) : '';
+}
+
+function isJinaFallbackEnabled(env) {
+  return String(env?.AI_FETCH_JINA_FALLBACK || 'false').toLowerCase() === 'true';
+}
+
+function isMarkdownNewFallbackEnabled(env) {
+  return String(env?.AI_FETCH_MARKDOWN_NEW_FALLBACK || 'false').toLowerCase() === 'true';
+}
+
+function shouldTrySourceFallback(source) {
+  return sourceQuality(source) < 4;
+}
+
+function isBetterSource(candidate, current) {
+  if (!candidate?.text) {
+    return false;
+  }
+
+  const candidateQuality = sourceQuality(candidate);
+  const currentQuality = sourceQuality(current);
+  if (candidateQuality !== currentQuality) {
+    return candidateQuality > currentQuality;
+  }
+
+  return candidate.text.length > (current?.text || '').length;
+}
+
+function sourceQuality(source) {
+  const text = normalizeText(source?.text || '');
+  if (!text) {
+    return 0;
+  }
+
+  let quality = scoreExtraction(text, source?.method || '');
+  if (['jina_reader', 'markdown_new'].includes(source?.method) && text.length >= 320) {
+    quality += 2;
+  }
+  return quality;
 }
 
 function extractSourceFromHtml(html) {
@@ -2455,7 +2603,8 @@ function findEventWeekday(text) {
   const weekdayPattern = '(sunday|monday|tuesday|wednesday|thursday|friday|saturday)';
   const directPatterns = [
     new RegExp(`\\b(?:killed|murdered|slain)\\b[^.!?]{0,80}\\b(?:on\\s+)?${weekdayPattern}\\b`, 'i'),
-    new RegExp(`\\b${weekdayPattern}\\b[^.!?]{0,80}\\b(?:killed|murdered|slain)\\b`, 'i')
+    new RegExp(`\\b${weekdayPattern}\\b[^.!?]{0,80}\\b(?:killed|murdered|slain)\\b`, 'i'),
+    new RegExp(`\\b(?:offence|offense|incident|deaths?)\\b[^.!?]{0,120}\\b(?:occurred|happened)\\b[^.!?]{0,120}\\b${weekdayPattern}\\b`, 'i')
   ];
 
   for (const pattern of directPatterns) {
@@ -2796,6 +2945,7 @@ export const __test = {
   candidateHardFieldsCompatible,
   deriveEventDateFromSource,
   extractSourceFromHtml,
+  fetchSourceContent,
   normalizeIncidentDate,
   parseJsonObject,
   parseRecordSearchParams,

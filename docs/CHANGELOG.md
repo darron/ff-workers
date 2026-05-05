@@ -23,7 +23,7 @@
 - Added canonical story URL persistence, backfill normalization, and DB-level unique indexes for story URLs and active ingest proposals (`0005_story_canonical_urls.sql`, `0006_story_canonical_url_backfill.sql`).
 - Reduced agent ingest batches to 5 URLs and added a Worker-side KV rate limiter.
 - Locked create-record approvals so bearer-token agents cannot override Worker-reviewed canonical record fields.
-- Disabled third-party source extraction fallbacks by default and documented disclosure tradeoffs.
+- Made third-party source extraction fallbacks an explicit deploy config, documented disclosure tradeoffs, and reused those fallbacks for ingest when direct fetches fail.
 - Tightened model JSON parsing, Sentry capture/PII settings, admin external-link rel attributes, and staging token rotation permissions.
 
 ## 2026-03-02

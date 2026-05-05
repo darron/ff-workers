@@ -58,7 +58,7 @@ Optional confidence thresholds:
 - `INGEST_AI_MODEL`, default falls back to `AI_MODEL`
 - `INGEST_RATE_LIMIT_PER_MINUTE`, default `60` when `AUTH_TOKENS` KV is configured
 
-Source fetches use public-URL validation, manual redirect checks, DNS checks, timeouts, and response-size caps. Third-party extraction fallbacks for summaries are disabled by default; enabling them can disclose source URLs to those services.
+Source fetches use public-URL validation, manual redirect checks, DNS checks, timeouts, and response-size caps. When direct fetches fail or extract too little text, configured third-party fallback readers (`r.jina.ai`, `markdown.new`) may be used for ingestion and summaries. These fallbacks can disclose source URLs, and depending on provider behavior, extracted article text to those services.
 
 ## Auth
 

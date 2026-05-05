@@ -39,6 +39,14 @@ test('relative event weekday resolves from publication timestamp', () => {
     __test.deriveEventDateFromSource(sourceText, '2026-05-01T17:27:40.206Z'),
     '2026-04-29'
   );
+
+  assert.equal(
+    __test.deriveEventDateFromSource(
+      'Official court documents show the offence allegedly occurred Wednesday night.',
+      '2026-05-01T17:17:18.455Z'
+    ),
+    '2026-04-29'
+  );
 });
 
 test('unsupported names and synthetic Jan. 1 dates are rejected', () => {
@@ -157,4 +165,53 @@ test('URL duplicate lookup includes canonical and trailing slash variants', () =
 
   assert.ok(variants.includes('https://www.ctvnews.ca/story'));
   assert.ok(variants.includes('https://www.ctvnews.ca/story/'));
+});
+
+test('ingest source fetch falls back to markdown.new when direct fetch fails', async () => {
+  const originalFetch = globalThis.fetch;
+  const articleUrl = 'https://www.cbc.ca/news/canada/calgary/story-9.7184460';
+
+  globalThis.fetch = async (url) => {
+    const urlString = String(url);
+    if (urlString.startsWith('https://cloudflare-dns.com/dns-query')) {
+      return new Response(JSON.stringify({
+        Status: 0,
+        Answer: [{ type: 1, data: '93.184.216.34' }]
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/dns-json' }
+      });
+    }
+
+    if (urlString === articleUrl) {
+      return new Response('', { status: 520 });
+    }
+
+    if (urlString === 'https://markdown.new/') {
+      return new Response(JSON.stringify({
+        success: true,
+        title: 'Father charged with 1st-degree murder in deaths of his 2 children | CBC News',
+        content: '# Calgary father charged with 1st-degree murder in deaths of 2 children\n\nA father has been charged with two counts of first-degree murder in the deaths of his two children in Calgary.\n\n```json\n{"datePublished":"2026-05-01T17:17:18.455Z"}\n```'
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    throw new Error(`Unexpected fetch URL: ${urlString}`);
+  };
+
+  try {
+    const source = await __test.fetchSourceContent(articleUrl, {
+      AI_FETCH_MARKDOWN_NEW_FALLBACK: 'true'
+    });
+
+    assert.equal(source.method, 'markdown_new');
+    assert.match(source.title, /CBC News/);
+    assert.match(source.text, /two children in Calgary/);
+    assert.equal(source.publishedAt, '2026-05-01T17:17:18.455Z');
+    assert.equal(source.error, '');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

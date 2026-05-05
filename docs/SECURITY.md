@@ -148,8 +148,9 @@ This document provides a comprehensive overview of security measures, vulnerabil
 
 - Direct source fetches run inside Cloudflare Workers.
 - Optional summarize-daemon extraction is used only when `AI_FETCH_SUMMARIZE_DAEMON_URL` is configured.
-- `r.jina.ai` and `markdown.new` fallbacks are disabled by default (`AI_FETCH_JINA_FALLBACK=false`, `AI_FETCH_MARKDOWN_NEW_FALLBACK=false`).
-- Enabling third-party extraction fallbacks may disclose source URLs, and depending on provider behavior, extracted article text to those services.
+- `r.jina.ai` and `markdown.new` fallbacks are controlled by `AI_FETCH_JINA_FALLBACK` and `AI_FETCH_MARKDOWN_NEW_FALLBACK`.
+- Staging and production enable those fallbacks so ingestion and summary jobs can handle source sites that block direct Worker fetches.
+- Third-party extraction fallbacks may disclose source URLs, and depending on provider behavior, extracted article text to those services.
 
 ### Output Security
 

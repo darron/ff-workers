@@ -142,7 +142,7 @@ Extraction flow per story:
 1. Reuse stored `body_text` when sufficient.
 2. Direct fetch + structured extraction (JSON-LD/article/main/meta).
 3. Optional summarize daemon fallback (`AI_FETCH_SUMMARIZE_DAEMON_URL`).
-4. Optional fallback readers: `r.jina.ai`, `markdown.new` (disabled by default).
+4. Optional fallback readers: `r.jina.ai`, `markdown.new` (enabled in deployed environments by config).
 
 Additional behavior:
 
