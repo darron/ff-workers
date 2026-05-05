@@ -605,7 +605,7 @@ async function createProposalForUrl(env, rawUrl) {
     return serializeProposalRow(activeProposal);
   }
 
-  const source = await fetchSourceContent(normalizedUrl);
+  const source = await fetchSourceContent(rawUrl || normalizedUrl);
   const facts = await extractIncidentFacts(env, normalizedUrl, source);
   const candidates = await findCandidateRecords(env, facts, source);
   const selected = await selectCandidateRecord(env, normalizedUrl, source, facts, candidates);

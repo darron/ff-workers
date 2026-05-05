@@ -28,6 +28,14 @@ const TRACKING_PARAMS = new Set([
 ]);
 
 export function validateAndNormalizePublicHttpUrl(rawUrl) {
+  return validatePublicHttpUrl(rawUrl, { canonicalize: true });
+}
+
+function validatePublicHttpFetchUrl(rawUrl) {
+  return validatePublicHttpUrl(rawUrl, { canonicalize: false });
+}
+
+function validatePublicHttpUrl(rawUrl, options = {}) {
   if (!rawUrl) {
     return { ok: true, url: '' };
   }
@@ -58,7 +66,9 @@ export function validateAndNormalizePublicHttpUrl(rawUrl) {
 
     parsed.hostname = hostname.includes(':') ? `[${hostname}]` : hostname;
     parsed.hash = '';
-    normalizePath(parsed);
+    if (options.canonicalize) {
+      normalizePath(parsed);
+    }
     stripTrackingParams(parsed);
     return { ok: true, url: parsed.toString() };
   } catch {
@@ -86,7 +96,7 @@ export async function safeFetchPublicText(rawUrl, options = {}) {
     10
   );
   const method = String(options.method || 'GET').toUpperCase();
-  let validation = validateAndNormalizePublicHttpUrl(rawUrl);
+  let validation = validatePublicHttpFetchUrl(rawUrl);
   if (!validation.ok) {
     return { ok: false, error: validation.error };
   }
@@ -137,7 +147,7 @@ export async function safeFetchPublicText(rawUrl, options = {}) {
         return { ok: false, error: 'Redirect Location is not a valid URL' };
       }
 
-      validation = validateAndNormalizePublicHttpUrl(nextUrl);
+      validation = validatePublicHttpFetchUrl(nextUrl);
       if (!validation.ok) {
         return { ok: false, error: `Unsafe redirect target: ${validation.error}` };
       }
