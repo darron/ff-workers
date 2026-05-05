@@ -1,7 +1,9 @@
 import { classifySourceType, getRecordCredibility } from './source-classification.js';
+import { safeFetchPublicText, validateAndNormalizePublicHttpUrl } from './url-safety.js';
 
 const DEFAULT_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 const MAX_STORY_TEXT_CHARS = 14000;
+const MAX_SOURCE_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_STORY_SUMMARY_CHARS = 900;
 const MAX_STORIES_FOR_SYNTHESIS = 30;
 const MIN_EXTRACTED_TEXT_CHARS = 320;
@@ -638,101 +640,8 @@ function normalizeSourceUrl(rawUrl) {
 }
 
 function getSafePublicHttpUrl(rawUrl) {
-  if (!rawUrl) {
-    return '';
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    const protocol = parsed.protocol.toLowerCase();
-    if (protocol !== 'http:' && protocol !== 'https:') {
-      return '';
-    }
-
-    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    if (!hostname) {
-      return '';
-    }
-
-    if (isBlockedHostname(hostname)) {
-      return '';
-    }
-
-    parsed.hostname = hostname;
-    return parsed.toString();
-  } catch {
-    return '';
-  }
-}
-
-function isBlockedHostname(hostname) {
-  if (
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.endsWith('.local')
-  ) {
-    return true;
-  }
-
-  return isPrivateOrLocalIp(hostname);
-}
-
-function isPrivateOrLocalIp(hostname) {
-  if (isPrivateIpv4(hostname)) {
-    return true;
-  }
-
-  return isPrivateIpv6(hostname);
-}
-
-function isPrivateIpv4(hostname) {
-  const parts = hostname.split('.');
-  if (parts.length !== 4) {
-    return false;
-  }
-
-  const octets = parts.map(p => Number.parseInt(p, 10));
-  if (octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) {
-    return false;
-  }
-
-  const [a, b, c] = octets;
-
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
-  if (a >= 224) return true; // multicast/reserved
-
-  // Documentation/test networks should also be blocked.
-  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
-  if (a === 198 && b === 51 && c === 100) return true;
-  if (a === 203 && b === 0 && c === 113) return true;
-
-  return false;
-}
-
-function isPrivateIpv6(hostname) {
-  if (!hostname.includes(':')) {
-    return false;
-  }
-
-  const normalized = hostname.toLowerCase().split('%')[0];
-  if (normalized === '::1' || normalized === '::') {
-    return true;
-  }
-
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) {
-    return true; // unique local
-  }
-
-  return (
-    normalized.startsWith('fe8') ||
-    normalized.startsWith('fe9') ||
-    normalized.startsWith('fea') ||
-    normalized.startsWith('feb')
-  ); // link-local fe80::/10
+  const validation = validateAndNormalizePublicHttpUrl(rawUrl);
+  return validation.ok ? validation.url : '';
 }
 
 async function getStoryText(story, sourceType, env, runtimeState) {
@@ -833,14 +742,19 @@ function isProxyUrl(urlString) {
 
 async function fetchAndExtractFromUrl(url, runtimeState) {
   try {
-    const response = await fetch(url, {
-      redirect: 'follow',
+    const fetched = await safeFetchPublicText(url, {
+      maxBytes: MAX_SOURCE_FETCH_BYTES,
       headers: {
         'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)',
         'Accept': 'text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.9, text/plain;q=0.8, */*;q=0.7'
       }
     });
 
+    if (!fetched.ok) {
+      return makeExtractionResult('', 'fetch_blocked', url);
+    }
+
+    const { response, text, finalUrl } = fetched;
     if (!response.ok) {
       return null;
     }
@@ -856,21 +770,23 @@ async function fetchAndExtractFromUrl(url, runtimeState) {
       return makeExtractionResult('', 'binary_content', url);
     }
 
-    const text = await response.text();
-
     if (contentType.includes('text/markdown') || contentType.includes('text/plain')) {
       const markdownText = normalizeText(cleanMarkdownServiceOutput(text));
-      return makeExtractionResult(markdownText, 'accept_markdown', url);
+      return makeExtractionResult(markdownText, 'accept_markdown', finalUrl || url);
     }
 
     if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
-      return makeExtractionResult(normalizeText(text), 'non_html_text', url);
+      return makeExtractionResult(normalizeText(text), 'non_html_text', finalUrl || url);
     }
 
     const structured = extractStructuredTextFromHtml(text);
     const generic = extractTextFromHtml(text);
 
-    return isBetterExtraction(structured, generic) ? structured : generic;
+    const best = isBetterExtraction(structured, generic) ? structured : generic;
+    return {
+      ...best,
+      url: finalUrl || url
+    };
   } catch (error) {
     markSubrequestLimited(runtimeState, error, 'fetch_source', url);
     console.error(`Failed to fetch story URL ${url}:`, error);
@@ -881,18 +797,22 @@ async function fetchAndExtractFromUrl(url, runtimeState) {
 async function fetchViaJinaReader(url, runtimeState) {
   try {
     const proxyUrl = `https://r.jina.ai/${url}`;
-    const response = await fetch(proxyUrl, {
-      redirect: 'follow',
+    const fetched = await safeFetchPublicText(proxyUrl, {
+      maxBytes: MAX_SOURCE_FETCH_BYTES,
       headers: {
         'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)'
       }
     });
 
+    if (!fetched.ok) {
+      return null;
+    }
+
+    const { response, text } = fetched;
     if (!response.ok) {
       return null;
     }
 
-    const text = await response.text();
     return makeExtractionResult(normalizeText(cleanMarkdownServiceOutput(text)), 'jina_reader', url);
   } catch (error) {
     markSubrequestLimited(runtimeState, error, 'fetch_jina', url);
@@ -903,8 +823,9 @@ async function fetchViaJinaReader(url, runtimeState) {
 
 async function fetchViaMarkdownNew(url, runtimeState) {
   try {
-    const response = await fetch('https://markdown.new/', {
+    const fetched = await safeFetchPublicText('https://markdown.new/', {
       method: 'POST',
+      maxBytes: MAX_SOURCE_FETCH_BYTES,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)'
@@ -916,11 +837,15 @@ async function fetchViaMarkdownNew(url, runtimeState) {
       })
     });
 
+    if (!fetched.ok) {
+      return null;
+    }
+
+    const { response, text } = fetched;
     if (!response.ok) {
       return null;
     }
 
-    const text = await response.text();
     return makeExtractionResult(normalizeText(cleanMarkdownServiceOutput(text)), 'markdown_new', url);
   } catch (error) {
     markSubrequestLimited(runtimeState, error, 'fetch_markdown_new', url);
@@ -948,6 +873,7 @@ async function fetchViaSummarizeDaemon(url, env, runtimeState) {
     const startResponse = await fetch(`${daemonBase}/v1/summarize`, {
       method: 'POST',
       headers,
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         url,
         title: null,
@@ -998,7 +924,8 @@ async function fetchSummarizeEventsText(daemonBase, runId, headers) {
   try {
     const response = await fetch(`${daemonBase}/v1/summarize/${encodeURIComponent(runId)}/events`, {
       method: 'GET',
-      headers
+      headers,
+      signal: AbortSignal.timeout(15000)
     });
 
     if (!response.ok) {

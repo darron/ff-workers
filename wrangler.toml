@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # Admin password hash (PBKDF2) - generate with: node generate-password-hash.js "your-password"
 # For production, use: npx wrangler secret put ADMIN_PASSWORD_HASH
+# For remote agent ingestion, use: npx wrangler secret put INGEST_API_TOKEN
 # For local development, uncomment the line below (but don't commit it to git!)
 # ADMIN_PASSWORD_HASH = "paste-your-hash-here-for-local-dev-only"
 
@@ -25,12 +26,13 @@ AI_SUMMARY_ENABLED = "true"
 AI_SUMMARY_AUTO_ON_SAVE = "false"
 AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
 AI_SUMMARY_STORIES_PER_JOB = "10"
-AI_FETCH_JINA_FALLBACK = "true"
-AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"
+AI_FETCH_JINA_FALLBACK = "false"
+AI_FETCH_MARKDOWN_NEW_FALLBACK = "false"
 AI_FETCH_SUMMARIZE_DAEMON_URL = ""
 AI_LOCATION_ENABLED = "true"
 AI_LOCATION_GEOCODE_ENABLED = "true"
 AI_LOCATION_MIN_CONFIDENCE = "0.72"
+INGEST_RATE_LIMIT_PER_MINUTE = "60"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -88,12 +90,13 @@ max_retries = 3
 AI_SUMMARY_ENABLED = "true"
 AI_SUMMARY_AUTO_ON_SAVE = "true"
 AI_SUMMARY_STORIES_PER_JOB = "5"
-AI_FETCH_JINA_FALLBACK = "true"
-AI_FETCH_MARKDOWN_NEW_FALLBACK = "true"
+AI_FETCH_JINA_FALLBACK = "false"
+AI_FETCH_MARKDOWN_NEW_FALLBACK = "false"
 AI_FETCH_SUMMARIZE_DAEMON_URL = ""
 AI_LOCATION_ENABLED = "true"
 AI_LOCATION_GEOCODE_ENABLED = "true"
 AI_LOCATION_MIN_CONFIDENCE = "0.72"
+INGEST_RATE_LIMIT_PER_MINUTE = "60"
 
 [observability]
 enabled = false

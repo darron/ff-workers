@@ -18,6 +18,9 @@ Original project: [github.com/darron/ff](https://github.com/darron/ff)
   - AI-assisted city verification from linked source content.
   - Geocoding + cache table for city/province coordinate reuse.
   - Per-record and bulk admin API triggers.
+- Agent-assisted story ingestion:
+  - Bearer-token proposal API for remote agents.
+  - Worker proposes an existing record, agent approves, Worker applies with dedupe/audit checks.
 - AI summaries are rendered as HTML from Markdown on record pages.
 - Sentry error monitoring (`fetch` + `queue`) via `@sentry/cloudflare`.
 
@@ -39,6 +42,7 @@ Quick start:
 - [docs/README.md](./docs/README.md) - Docs index
 - [docs/SETUP.md](./docs/SETUP.md) - Setup/deployment
 - [docs/ADMIN_SETUP.md](./docs/ADMIN_SETUP.md) - Admin dashboard + API
+- [docs/INGESTION.md](./docs/INGESTION.md) - Agent story ingestion API
 - [docs/SECURITY.md](./docs/SECURITY.md) - Security notes
 - [docs/NVM_GUIDE.md](./docs/NVM_GUIDE.md) - Node/NVM guidance
 - [docs/CHANGELOG.md](./docs/CHANGELOG.md) - Change history
@@ -86,6 +90,7 @@ Admin:
 - `/admin`
 - `/admin/api/records/*`
 - `/admin/api/stories/*`
+- `/admin/api/ingest/proposals*`
 - `/admin/api/sentry-test`
 
 ## Environments
@@ -137,7 +142,7 @@ Extraction flow per story:
 1. Reuse stored `body_text` when sufficient.
 2. Direct fetch + structured extraction (JSON-LD/article/main/meta).
 3. Optional summarize daemon fallback (`AI_FETCH_SUMMARIZE_DAEMON_URL`).
-4. Optional fallback readers: `r.jina.ai`, `markdown.new`.
+4. Optional fallback readers: `r.jina.ai`, `markdown.new` (disabled by default).
 
 Additional behavior:
 

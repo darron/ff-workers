@@ -137,6 +137,60 @@ export async function isAuthenticated(request, env) {
 }
 
 /**
+ * Check a bearer token scoped to machine ingestion endpoints.
+ */
+export function isIngestTokenAuthenticated(request, env) {
+  const configuredTokens = getConfiguredIngestTokens(env);
+  if (configuredTokens.length === 0) {
+    return false;
+  }
+
+  const token = getBearerToken(request);
+  if (!token) {
+    return false;
+  }
+
+  return configuredTokens.some(configured => timingSafeStringEqual(token, configured));
+}
+
+function getConfiguredIngestTokens(env) {
+  const raw = String(env?.INGEST_API_TOKENS || env?.INGEST_API_TOKEN || '').trim();
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(',')
+    .map(token => token.trim())
+    .filter(Boolean);
+}
+
+function getBearerToken(request) {
+  const authorization = request.headers.get('Authorization') || '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+function timingSafeStringEqual(a, b) {
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(String(a || ''));
+  const bBytes = encoder.encode(String(b || ''));
+  const length = Math.max(aBytes.length, bBytes.length, 1);
+  const paddedA = new Uint8Array(length);
+  const paddedB = new Uint8Array(length);
+
+  paddedA.set(aBytes.slice(0, length));
+  paddedB.set(bBytes.slice(0, length));
+
+  let diff = aBytes.length === bBytes.length ? 0 : 1;
+  for (let i = 0; i < length; i++) {
+    diff |= paddedA[i] ^ paddedB[i];
+  }
+
+  return diff === 0;
+}
+
+/**
  * Create a new session
  */
 export async function createSession(env) {
@@ -240,4 +294,3 @@ export async function requireAuth(request, env) {
   }
   return null; // null means authenticated
 }
-

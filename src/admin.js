@@ -2,7 +2,12 @@
  * Admin REST API and database operations
  */
 
-import { requireAuth, authenticate, destroySession } from './auth.js';
+import {
+  requireAuth,
+  authenticate,
+  destroySession,
+  isIngestTokenAuthenticated
+} from './auth.js';
 import * as Sentry from '@sentry/cloudflare';
 import {
   enqueueRecordSummary,
@@ -10,92 +15,8 @@ import {
   isAutoAiSummaryEnabled
 } from './ai-summary.js';
 import { enrichRecordLocation } from './ai-location.js';
-
-function validateAndNormalizePublicHttpUrl(rawUrl) {
-  if (!rawUrl) {
-    return { ok: true, url: '' };
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    const protocol = parsed.protocol.toLowerCase();
-    if (protocol !== 'http:' && protocol !== 'https:') {
-      return { ok: false, error: 'URL must use http or https' };
-    }
-
-    if (parsed.username || parsed.password) {
-      return { ok: false, error: 'URL must not include credentials' };
-    }
-
-    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    if (!hostname) {
-      return { ok: false, error: 'URL host is required' };
-    }
-
-    if (
-      hostname === 'localhost' ||
-      hostname.endsWith('.localhost') ||
-      hostname.endsWith('.local')
-    ) {
-      return { ok: false, error: 'Local hostnames are not allowed' };
-    }
-
-    if (isPrivateOrLocalIp(hostname)) {
-      return { ok: false, error: 'Private/local IP ranges are not allowed' };
-    }
-
-    parsed.hostname = hostname;
-    return { ok: true, url: parsed.toString() };
-  } catch {
-    return { ok: false, error: 'Invalid URL format' };
-  }
-}
-
-function isPrivateOrLocalIp(hostname) {
-  return isPrivateIpv4(hostname) || isPrivateIpv6(hostname);
-}
-
-function isPrivateIpv4(hostname) {
-  const parts = hostname.split('.');
-  if (parts.length !== 4) {
-    return false;
-  }
-
-  const octets = parts.map(p => Number.parseInt(p, 10));
-  if (octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) {
-    return false;
-  }
-
-  const [a, b, c] = octets;
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a >= 224) return true;
-  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
-  if (a === 198 && b === 51 && c === 100) return true;
-  if (a === 203 && b === 0 && c === 113) return true;
-
-  return false;
-}
-
-function isPrivateIpv6(hostname) {
-  if (!hostname.includes(':')) {
-    return false;
-  }
-
-  const normalized = hostname.toLowerCase().split('%')[0];
-  if (normalized === '::1' || normalized === '::') return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
-
-  return (
-    normalized.startsWith('fe8') ||
-    normalized.startsWith('fe9') ||
-    normalized.startsWith('fea') ||
-    normalized.startsWith('feb')
-  );
-}
+import { handleIngestAPI, isIngestAPIPath } from './ingest.js';
+import { validateAndNormalizePublicHttpUrl } from './url-safety.js';
 
 async function enqueueRecordSummaryWithWarning(env, recordId, reason, context) {
   const result = await enqueueRecordSummary(env, recordId, reason);
@@ -145,10 +66,6 @@ async function readJsonBodySafe(request) {
  * Admin API routes handler
  */
 export async function handleAdminAPI(request, env, path, method) {
-  // All admin routes require authentication
-  const authCheck = await requireAuth(request, env);
-  if (authCheck) return authCheck;
-
   // Parse path segments
   const segments = path.split('/').filter(s => s);
   // segments should be: ['admin', 'api', ...]
@@ -159,6 +76,18 @@ export async function handleAdminAPI(request, env, path, method) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+
+  if (isIngestAPIPath(segments)) {
+    const authCheck = isIngestTokenAuthenticated(request, env)
+      ? null
+      : await requireAuth(request, env);
+    if (authCheck) return authCheck;
+    return await handleIngestAPI(request, env, method, segments);
+  }
+
+  // All non-ingest admin API routes require browser-session authentication.
+  const authCheck = await requireAuth(request, env);
+  if (authCheck) return authCheck;
 
   const resource = segments[2]; // 'records' or 'stories'
   const id = segments[3]; // Optional ID
@@ -179,6 +108,7 @@ export async function handleAdminAPI(request, env, path, method) {
     }
   } catch (error) {
     console.error('Admin API error:', error);
+    Sentry.captureException(error, { tags: { area: 'admin-api' } });
     return new Response(JSON.stringify({ error: 'Internal server error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -508,11 +438,12 @@ async function createRecord(request, env) {
           
           try {
             await env.DB.prepare(
-              `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-               VALUES (?, ?, ?, ?, ?)`
+              `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+               VALUES (?, ?, ?, ?, ?, ?)`
             ).bind(
               story.id,
               body.id,
+              story.url || null,
               story.url || null,
               story.body_text || null,
               story.ai_summary || null
@@ -684,28 +615,39 @@ async function updateRecord(request, env, id) {
           `SELECT id FROM news_stories WHERE id = ?`
         ).bind(story.id).first();
         
-        if (existing) {
-          // Update existing story
-          await env.DB.prepare(
-            `UPDATE news_stories SET url = ?, body_text = ?, ai_summary = ? WHERE id = ?`
-          ).bind(
-            story.url || null,
-            story.body_text || null,
-            story.ai_summary || null,
-            story.id
-          ).run();
-        } else {
-          // Insert new story
-          await env.DB.prepare(
-            `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-             VALUES (?, ?, ?, ?, ?)`
-          ).bind(
-            story.id,
-            id,
-            story.url || null,
-            story.body_text || null,
-            story.ai_summary || null
-          ).run();
+        try {
+          if (existing) {
+            // Update existing story
+            await env.DB.prepare(
+              `UPDATE news_stories SET url = ?, canonical_url = ?, body_text = ?, ai_summary = ? WHERE id = ?`
+            ).bind(
+              story.url || null,
+              story.url || null,
+              story.body_text || null,
+              story.ai_summary || null,
+              story.id
+            ).run();
+          } else {
+            // Insert new story
+            await env.DB.prepare(
+              `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+               VALUES (?, ?, ?, ?, ?, ?)`
+            ).bind(
+              story.id,
+              id,
+              story.url || null,
+              story.url || null,
+              story.body_text || null,
+              story.ai_summary || null
+            ).run();
+          }
+        } catch (error) {
+          if (error.message && (error.message.includes('UNIQUE') || error.message.includes('unique'))) {
+            // Skip duplicate URL silently within the bulk record-update path.
+            console.warn(`Skipping story ${story.id}: duplicate canonical URL.`);
+            continue;
+          }
+          throw error;
         }
       }
     }
@@ -857,11 +799,12 @@ async function createStory(request, env) {
   
   try {
     await env.DB.prepare(
-      `INSERT INTO news_stories (id, record_id, url, body_text, ai_summary)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO news_stories (id, record_id, url, canonical_url, body_text, ai_summary)
+       VALUES (?, ?, ?, ?, ?, ?)`
     ).bind(
       body.id,
       body.record_id,
+      body.url || null,
       body.url || null,
       body.body_text || null,
       body.ai_summary || null
@@ -885,7 +828,7 @@ async function createStory(request, env) {
     });
   } catch (error) {
     if (error.message.includes('UNIQUE') || error.message.includes('unique')) {
-      return new Response(JSON.stringify({ error: 'Story with this ID already exists' }), {
+      return new Response(JSON.stringify({ error: 'Story with this ID or URL already exists' }), {
         status: 409,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -956,6 +899,7 @@ async function updateStory(request, env, id) {
   const fields = {
     record_id: body.record_id,
     url: body.url,
+    canonical_url: body.url === undefined ? undefined : body.url || null,
     body_text: body.body_text,
     ai_summary: body.ai_summary
   };
@@ -975,10 +919,20 @@ async function updateStory(request, env, id) {
   }
   
   values.push(id);
-  
-  await env.DB.prepare(
-    `UPDATE news_stories SET ${updates.join(', ')} WHERE id = ?`
-  ).bind(...values).run();
+
+  try {
+    await env.DB.prepare(
+      `UPDATE news_stories SET ${updates.join(', ')} WHERE id = ?`
+    ).bind(...values).run();
+  } catch (error) {
+    if (error.message && (error.message.includes('UNIQUE') || error.message.includes('unique'))) {
+      return new Response(JSON.stringify({ error: 'Story with this URL already exists' }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    throw error;
+  }
 
   if (isAutoAiSummaryEnabled(env)) {
     try {

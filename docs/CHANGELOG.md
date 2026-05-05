@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-05-04
+
+### Agent Story Ingestion
+
+- Added bearer-token protected ingestion endpoints under `/admin/api/ingest/proposals`.
+- Added Worker proposal and agent approval flow before writing `news_stories`.
+- Added create-record proposal support for new incidents when no existing record matches.
+- Added event-date-aware matching so same/near incident dates boost existing records and different years reduce false matches.
+- Added bearer-token read-only structured record search for remote agents under `/admin/api/ingest/records/search`.
+- Added `story_ingest_proposals` audit table with proposal status, extracted facts, confidence, decisions, and applied story IDs.
+- Added duplicate URL checks, confidence thresholds, and review fallback for worker/agent disagreement.
+- Moved admin story URL validation into a shared helper for reuse by ingestion.
+- Documented remote-agent setup and API usage in `docs/INGESTION.md`.
+- Added staging-only Taskfile targets for migration, deploy, token setup, and ingest smoke testing.
+- Documented metadata-update gap for later facts, such as replacing `Unknown` after a name is released.
+- Added focused Node tests for extraction, event-date derivation, name/date guardrails, hard candidate checks, and structured record search.
+
+### Pre-Public Ingestion Hardening
+
+- Added bounded public-source fetching with manual redirect validation, DNS checks, timeouts, and response-size caps.
+- Added canonical story URL persistence, backfill normalization, and DB-level unique indexes for story URLs and active ingest proposals (`0005_story_canonical_urls.sql`, `0006_story_canonical_url_backfill.sql`).
+- Reduced agent ingest batches to 5 URLs and added a Worker-side KV rate limiter.
+- Locked create-record approvals so bearer-token agents cannot override Worker-reviewed canonical record fields.
+- Disabled third-party source extraction fallbacks by default and documented disclosure tradeoffs.
+- Tightened model JSON parsing, Sentry capture/PII settings, admin external-link rel attributes, and staging token rotation permissions.
+
+## 2026-03-02
+
+### Location Enrichment and Map Drilldown
+
+- Added AI-assisted city verification, geocoding, and `city_geocode_cache` (`512a103`, merged as `9084770`).
+- Added location metadata fields through `0003_location_enrichment.sql`.
+- Added admin actions for single-record location enrichment and bulk missing-location backfill.
+- Updated `/map/canada` to prefer verified city and coordinate fields when available.
+- Added city-level Leaflet drilldown for records with verified coordinates.
+- Throttled bulk geocoding to respect Nominatim rate limits (`0022997`).
+- Added Leaflet CDN integrity and crossorigin attributes (`0022997`).
+- Preserved existing verified city data when AI confidence is lower and fixed partial-enrichment skip behavior (`ff3afdc`).
+
+## 2026-02-26
+
+### Canada Province Map
+
+- Added `/map/canada` with an interactive Canada province map (`5ee7f8e`, merged as `1e35550`).
+- Added province-level metric toggles for events, deaths, and events per million.
+- Added province detail panels with recent record links and per-province totals.
+- Added province quick list and direct links to province/event pages.
+- Added `/map` redirect to `/map/canada`.
+- Added map navigation for discoverability.
+
 ## 2026-02-18
 
 ### AI Summaries and Queue Processing

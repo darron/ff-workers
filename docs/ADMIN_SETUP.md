@@ -42,6 +42,7 @@ npx wrangler secret put ADMIN_PASSWORD_HASH --env production
 
 - Record CRUD.
 - News story CRUD.
+- Agent story ingest proposal review via API.
 - Single-record AI generation (`Generate AI` button).
 - Bulk AI backfill (`Backfill Missing AI` button).
 - Single-record location enrichment (`Enrich Location` button).
@@ -89,6 +90,23 @@ All endpoints require admin authentication (session cookie).
 - `POST /admin/api/stories`
 - `PUT /admin/api/stories/:id`
 - `DELETE /admin/api/stories/:id`
+
+### Agent ingestion APIs
+
+These endpoints accept either an admin session cookie or `Authorization: Bearer <INGEST_API_TOKEN>`.
+
+- `POST /admin/api/ingest/proposals`
+  - creates Worker proposals for one `url` or up to 5 `urls`
+- `GET /admin/api/ingest/proposals`
+  - lists proposals, optionally filtered by `status`
+- `GET /admin/api/ingest/proposals/:id`
+  - returns one proposal
+- `POST /admin/api/ingest/proposals/:id/approve`
+  - applies only when the Worker proposal and agent approval agree
+- `POST /admin/api/ingest/proposals/:id/reject`
+  - marks a proposal rejected
+
+See [INGESTION.md](./INGESTION.md) for setup, payloads, and agent rules.
 
 ### AI summary APIs
 

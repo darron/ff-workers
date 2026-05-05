@@ -129,16 +129,27 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ Secure cookies: `HttpOnly`, `SameSite=Strict`, 24-hour expiration
 - ✅ Password hashing: PBKDF2 (salted, configurable iterations)
 - ✅ Passwords stored as Cloudflare secrets (not in code)
+- ✅ Remote agent ingestion uses separate bearer token secrets scoped only to `/admin/api/ingest/*`
 
 ### Input Validation
 
 - ✅ All IDs validated (records, stories) - format: alphanumeric, hyphens, underscores (UUIDs supported)
 - ✅ URLs validated using `new URL()` constructor
 - ✅ Public URL-only policy blocks localhost and private/local IP ranges
+- ✅ Source fetches use manual redirect validation, DNS checks, timeout, and response-size caps
 - ✅ Year validation: 4-digit format, min/max constraints
 - ✅ Input trimming applied to all text inputs
 - ✅ Array length limits enforced (100 stories max)
+- ✅ Agent ingestion batch limits enforced (5 URLs max)
+- ✅ Agent ingestion has a Worker-side KV rate limiter when `AUTH_TOKENS` is configured
 - ✅ Required fields validated before database operations
+
+### Third-Party Source Extraction
+
+- Direct source fetches run inside Cloudflare Workers.
+- Optional summarize-daemon extraction is used only when `AI_FETCH_SUMMARIZE_DAEMON_URL` is configured.
+- `r.jina.ai` and `markdown.new` fallbacks are disabled by default (`AI_FETCH_JINA_FALLBACK=false`, `AI_FETCH_MARKDOWN_NEW_FALLBACK=false`).
+- Enabling third-party extraction fallbacks may disclose source URLs, and depending on provider behavior, extracted article text to those services.
 
 ### Output Security
 
@@ -153,6 +164,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 - ✅ No string concatenation in SQL queries
 - ✅ Dynamic UPDATE queries use hardcoded field names (not user input)
 - ✅ All IDs validated before use in queries
+- ✅ Agent ingestion writes are proposal-gated, deduplicated, and audited in `story_ingest_proposals`
 
 ### DoS Protection
 
@@ -204,6 +216,7 @@ This document provides a comprehensive overview of security measures, vulnerabil
 2. **`/admin/api/*`** - All REST API endpoints
    - Protected by `requireAuth()` middleware
    - Returns 401 Unauthorized if not authenticated
+   - `/admin/api/ingest/*` also accepts scoped bearer tokens for remote agents
 
 ### ✅ Public Routes (Correctly Unprotected)
 
