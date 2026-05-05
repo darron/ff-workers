@@ -126,6 +126,8 @@ Prefer hard evidence:
 Treat record dates as year-only metadata unless source text gives exact dates.
 Do not treat article publication/update dates as event dates. If `decision.record_date_basis` is `publication_fallback`, mention that in your report back and use extra caution before approving a newly created record.
 
+When the Worker proposes `attach_to_record`, generic overlap on city/province, victim counts, and weapon type is not enough. If the source appears to describe a new incident and the proposed existing record lacks strong date, name, or case-specific evidence, do not approve the attach; reject or leave it for human review with the specific mismatch.
+
 If a source has a clear event date and no existing record is near that date, expect a `create_record` proposal. If an existing record is around the same date and has compatible facts, it may be the right attachment target even when the title or extracted name differs.
 
 Social-only sources should be treated as alleged unless corroborated by independent reporting.
