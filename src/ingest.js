@@ -368,10 +368,10 @@ async function approveCreateRecordProposal(env, proposal, body, approval) {
   }
 
   if (proposal.proposed_record_id && targetRecordId !== proposal.proposed_record_id) {
-    return await markProposalNeedsReview(env, proposal, {
+    return await approveCreateRecordRedirect(env, proposal, {
       agentConfidence,
       agentReason,
-      error: `Agent approved ${targetRecordId}, but worker proposed new record ${proposal.proposed_record_id}.`
+      targetRecordId
     });
   }
 
@@ -437,6 +437,74 @@ async function approveCreateRecordProposal(env, proposal, body, approval) {
     decision: {
       applied_record_id: targetRecordId,
       applied_record: record.value
+    }
+  });
+}
+
+async function approveCreateRecordRedirect(env, proposal, approval) {
+  const { agentConfidence, agentReason, targetRecordId } = approval;
+
+  const record = await findRecordForIngest(env, targetRecordId);
+  if (!record) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: `Agent redirect target was not found: ${targetRecordId}`
+    });
+  }
+
+  const minAgentConfidence = getConfidenceThreshold(env, 'INGEST_AGENT_MIN_CONFIDENCE', DEFAULT_AGENT_MIN_CONFIDENCE);
+  if (proposal.status !== STATUS_WORKER_PROPOSED || agentConfidence < minAgentConfidence) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: `Agent redirect confidence threshold not met. agent=${agentConfidence}.`
+    });
+  }
+
+  if (!agentReason || agentReason.length < 20) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: 'Agent redirect requires an evidence-based agent_reason.'
+    });
+  }
+
+  const duplicate = await findExistingStoryByUrl(env, proposal.normalized_url, proposal.url);
+  if (duplicate) {
+    const updated = await updateProposalStatus(env, proposal.id, {
+      status: STATUS_DUPLICATE,
+      agentConfidence,
+      agentReason,
+      agentDecision: 'approve',
+      decision: {
+        duplicate_story_id: duplicate.id,
+        duplicate_record_id: duplicate.record_id,
+        duplicate_url: duplicate.url,
+        agent_redirect_record_id: targetRecordId,
+        worker_proposed_record_id: proposal.proposed_record_id || null
+      },
+      error: null
+    });
+
+    return jsonResponse({
+      success: false,
+      status: STATUS_DUPLICATE,
+      proposal: serializeProposalRow(updated),
+      duplicate
+    }, 409);
+  }
+
+  return await attachStoryAndApplyProposal(env, proposal, targetRecordId, {
+    agentConfidence,
+    agentReason,
+    summaryReason: 'ingest_agent_redirect_attached',
+    agentDecision: 'approve_redirect',
+    decision: {
+      applied_record_id: targetRecordId,
+      agent_redirect_record_id: targetRecordId,
+      worker_proposed_record_id: proposal.proposed_record_id || null,
+      worker_proposed_action: proposal.proposed_action || null
     }
   });
 }
@@ -512,7 +580,7 @@ async function attachStoryAndApplyProposal(env, proposal, targetRecordId, option
      WHERE id = ?`
   ).bind(
     STATUS_APPLIED,
-    'approve',
+    options.agentDecision || 'approve',
     options.agentConfidence,
     options.agentReason || null,
     JSON.stringify(decision),
@@ -2941,6 +3009,7 @@ function isMissingIngestSchemaError(error) {
 }
 
 export const __test = {
+  approveProposal,
   buildUrlLookupVariants,
   candidateHardFieldsCompatible,
   deriveEventDateFromSource,

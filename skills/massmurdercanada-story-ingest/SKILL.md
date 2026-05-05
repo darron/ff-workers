@@ -132,7 +132,9 @@ Social-only sources should be treated as alleged unless corroborated by independ
 
 ## Approve
 
-Use the Worker-proposed record ID unless the human operator explicitly instructed a different target. If your target differs from the Worker proposal, do not approve; leave it for review.
+Use the Worker-proposed record ID when it is correct. If the Worker proposes `create_record` but you find a clearly matching existing record, you may approve with the existing record ID instead. This is an agent redirect: use it only with high confidence and a concrete evidence-based `agent_reason`.
+
+If your target differs from a Worker `attach_to_record` proposal, do not approve; leave it for review.
 
 For `proposed_action: "attach_to_record"`, the ID must already exist.
 
@@ -156,6 +158,8 @@ Approval should include:
 - `agent_reason`, one concise evidence-based sentence
 
 For `create_record`, do not send `record` field overrides. Approve the Worker-proposed record ID only when the proposed record is correct enough to create as-is. Report field corrections separately for human/admin review.
+
+For `create_record` proposals that are actually duplicates of an existing incident, approve with the existing record ID instead of rejecting. Example reason: "Article is about the sole survivor of the existing Felix shooting later dying from injuries, not a separate incident."
 
 ```json
 {

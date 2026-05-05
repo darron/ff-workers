@@ -215,3 +215,192 @@ test('ingest source fetch falls back to markdown.new when direct fetch fails', a
     globalThis.fetch = originalFetch;
   }
 });
+
+test('create-record proposal can be agent-redirected to an existing record', async () => {
+  const env = makeIngestApprovalEnv({
+    proposal: {
+      id: 'ingest_redirect',
+      url: 'https://example.com/story',
+      normalized_url: 'https://example.com/story',
+      status: 'worker_proposed',
+      proposed_action: 'create_record',
+      proposed_record_id: 'new-record-id',
+      proposed_story_id: 'story_redirect',
+      worker_confidence: 1,
+      worker_reason: 'Worker thought this was new.',
+      extracted_text: 'Article text long enough to persist. '.repeat(20),
+      decision_json: JSON.stringify({
+        proposed_record: { id: 'new-record-id', date: '2026', city: 'Winnipeg', province: 'MB' }
+      }),
+      created_at: '2026-05-05T00:00:00.000Z',
+      updated_at: '2026-05-05T00:00:00.000Z'
+    },
+    existingRecord: {
+      id: 'existing-record-id',
+      name: 'Felix'
+    }
+  });
+
+  const request = new Request('https://example.test/admin/api/ingest/proposals/ingest_redirect/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: 'existing-record-id',
+      agent_confidence: 1,
+      agent_reason: 'Article is about survivor of existing Felix incident dying later, not a new incident.'
+    })
+  });
+
+  const response = await __test.approveProposal(request, env, 'ingest_redirect');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'applied');
+  assert.equal(body.record_id, 'existing-record-id');
+  assert.equal(env.insertedStory.record_id, 'existing-record-id');
+  assert.equal(env.updatedProposal.agent_decision, 'approve_redirect');
+  assert.equal(env.updatedProposal.status, 'applied');
+  assert.equal(env.summary.recordId, 'existing-record-id');
+  assert.equal(env.summary.reason, 'ingest_agent_redirect_attached');
+
+  const decision = JSON.parse(env.updatedProposal.decision_json);
+  assert.equal(decision.agent_redirect_record_id, 'existing-record-id');
+  assert.equal(decision.worker_proposed_record_id, 'new-record-id');
+});
+
+test('create-record redirect to a missing record remains needs_review', async () => {
+  const env = makeIngestApprovalEnv({
+    proposal: {
+      id: 'ingest_missing_redirect',
+      url: 'https://example.com/story',
+      normalized_url: 'https://example.com/story',
+      status: 'worker_proposed',
+      proposed_action: 'create_record',
+      proposed_record_id: 'new-record-id',
+      proposed_story_id: 'story_redirect',
+      worker_confidence: 1,
+      worker_reason: 'Worker thought this was new.',
+      extracted_text: '',
+      decision_json: '{}',
+      created_at: '2026-05-05T00:00:00.000Z',
+      updated_at: '2026-05-05T00:00:00.000Z'
+    },
+    existingRecord: null
+  });
+
+  const request = new Request('https://example.test/admin/api/ingest/proposals/ingest_missing_redirect/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: 'missing-record-id',
+      agent_confidence: 1,
+      agent_reason: 'Article should attach elsewhere.'
+    })
+  });
+
+  const response = await __test.approveProposal(request, env, 'ingest_missing_redirect');
+  const body = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(body.status, 'needs_review');
+  assert.equal(env.insertedStory, null);
+  assert.match(env.updatedProposal.error, /redirect target was not found/);
+});
+
+function makeIngestApprovalEnv({ proposal, existingRecord }) {
+  const state = {
+    proposal: { ...proposal },
+    insertedStory: null,
+    updatedProposal: null,
+    summary: null
+  };
+
+  return {
+    get insertedStory() {
+      return state.insertedStory;
+    },
+    get updatedProposal() {
+      return state.updatedProposal;
+    },
+    get summary() {
+      return state.summary;
+    },
+    SUMMARY_QUEUE: {
+      async send(payload) {
+        state.summary = payload;
+      }
+    },
+    DB: {
+      prepare(sql) {
+        return makeStatement(sql, state, existingRecord);
+      }
+    }
+  };
+}
+
+function makeStatement(sql, state, existingRecord) {
+  return {
+    bind(...values) {
+      return {
+        async first() {
+          if (sql.includes('FROM story_ingest_proposals') && sql.includes('WHERE id = ?')) {
+            return state.proposal?.id === values[0] ? { ...state.proposal } : null;
+          }
+          if (sql.includes('FROM records') && sql.includes('WHERE id = ?')) {
+            return existingRecord?.id === values[0] ? { ...existingRecord } : null;
+          }
+          if (sql.includes('FROM news_stories')) {
+            return null;
+          }
+          return null;
+        },
+        async run() {
+          if (sql.includes('INSERT INTO news_stories')) {
+            state.insertedStory = {
+              id: values[0],
+              record_id: values[1],
+              url: values[2],
+              canonical_url: values[3],
+              body_text: values[4],
+              ai_summary: values[5]
+            };
+            return {};
+          }
+
+          if (sql.includes('UPDATE story_ingest_proposals')) {
+            const status = values[0];
+            if (sql.includes('applied_at = ?')) {
+              state.proposal = {
+                ...state.proposal,
+                status,
+                agent_decision: values[1],
+                agent_confidence: values[2],
+                agent_reason: values[3],
+                decision_json: values[4],
+                applied_at: values[5],
+                applied_story_id: values[6],
+                error: null,
+                updated_at: values[7]
+              };
+            } else {
+              state.proposal = {
+                ...state.proposal,
+                status,
+                agent_decision: values[1] ?? state.proposal.agent_decision,
+                agent_confidence: values[2] ?? state.proposal.agent_confidence,
+                agent_reason: values[3] ?? state.proposal.agent_reason,
+                decision_json: values[4],
+                error: values[5],
+                updated_at: values[6]
+              };
+            }
+            state.updatedProposal = { ...state.proposal };
+            return {};
+          }
+
+          return {};
+        }
+      };
+    }
+  };
+}

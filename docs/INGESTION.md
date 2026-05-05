@@ -145,7 +145,7 @@ The Worker applies only when:
 
 - the proposal is still `worker_proposed`
 - `attach_to_record`: the approved record exists
-- `create_record`: the approved record ID matches the Worker-proposed new record ID
+- `create_record`: the approved record ID matches the Worker-proposed new record ID, or the agent explicitly redirects to an existing record with high confidence and an evidence-based reason
 - worker and agent confidence meet thresholds
 - the URL is not already attached to another story
 
@@ -170,6 +170,8 @@ For new-record proposals, bearer-token approval does not accept record-field ove
 ```
 
 Field corrections should go through the admin UI or a future reviewed `record_patch` proposal flow.
+
+If the Worker proposes `create_record` but the agent finds a clearly matching existing record, the agent may approve with that existing `record_id` instead. The Worker will attach the story to that existing record and audit the decision as an agent redirect. Use this only when the existing record is a strong factual match; otherwise reject or leave for human review.
 
 ## Reject Proposal
 

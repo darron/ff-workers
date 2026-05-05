@@ -11,6 +11,7 @@
 - Added bearer-token read-only structured record search for remote agents under `/admin/api/ingest/records/search`.
 - Added `story_ingest_proposals` audit table with proposal status, extracted facts, confidence, decisions, and applied story IDs.
 - Added duplicate URL checks, confidence thresholds, and review fallback for worker/agent disagreement.
+- Added agent redirect approval for cases where the Worker proposes `create_record` but the agent finds a strong existing-record match.
 - Moved admin story URL validation into a shared helper for reuse by ingestion.
 - Documented remote-agent setup and API usage in `docs/INGESTION.md`.
 - Added staging-only Taskfile targets for migration, deploy, token setup, and ingest smoke testing.
