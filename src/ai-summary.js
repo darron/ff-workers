@@ -1,7 +1,7 @@
 import { classifySourceType, getRecordCredibility } from './source-classification.js';
 import { safeFetchPublicText, validateAndNormalizePublicHttpUrl } from './url-safety.js';
 
-const DEFAULT_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+const DEFAULT_MODEL = '@cf/zai-org/glm-4.7-flash';
 const MAX_STORY_TEXT_CHARS = 14000;
 const MAX_SOURCE_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_STORY_SUMMARY_CHARS = 900;
@@ -595,6 +595,11 @@ function extractAiText(result) {
   if (!result) return null;
   if (typeof result === 'string') return result.trim();
   if (typeof result.response === 'string') return result.response.trim();
+  if (Array.isArray(result.choices) && result.choices.length > 0) {
+    const first = result.choices[0];
+    if (typeof first?.message?.content === 'string') return first.message.content.trim();
+    if (typeof first?.text === 'string') return first.text.trim();
+  }
 
   if (Array.isArray(result.result) && result.result.length > 0) {
     const first = result.result[0];

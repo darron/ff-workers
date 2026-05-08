@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-08
+
+### Workers AI Model Refresh
+
+- Replaced the deprecated Workers AI default model with `@cf/zai-org/glm-4.7-flash`.
+- Added OpenAI-compatible chat completion response handling for Workers AI models that return `choices`.
+- Enabled JSON mode and disabled model thinking for ingest and location JSON extraction calls so newer reasoning models return parseable JSON within existing token budgets.
+
 ## 2026-05-04
 
 ### Agent Story Ingestion

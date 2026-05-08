@@ -13,7 +13,7 @@ import { enqueueRecordSummary } from './ai-summary.js';
 import { classifySourceType } from './source-classification.js';
 import { safeFetchPublicText, validateAndNormalizePublicHttpUrl } from './url-safety.js';
 
-const DEFAULT_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+const DEFAULT_MODEL = '@cf/zai-org/glm-4.7-flash';
 const MAX_BATCH_URLS = 5;
 const MAX_EXTRACTED_TEXT_CHARS = 14000;
 const MAX_AI_TEXT_CHARS = 9000;
@@ -2341,7 +2341,10 @@ async function runAiJson(env, prompt, maxTokens = 420) {
           content: prompt
         }
       ],
+      response_format: { type: 'json_object' },
+      chat_template_kwargs: { enable_thinking: false },
       max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       temperature: 0.1
     });
 
@@ -2357,6 +2360,11 @@ function extractAiText(result) {
   if (!result) return '';
   if (typeof result === 'string') return result.trim();
   if (typeof result.response === 'string') return result.response.trim();
+  if (Array.isArray(result.choices) && result.choices.length > 0) {
+    const first = result.choices[0];
+    if (typeof first?.message?.content === 'string') return first.message.content.trim();
+    if (typeof first?.text === 'string') return first.text.trim();
+  }
 
   if (Array.isArray(result.result) && result.result.length > 0) {
     const first = result.result[0];

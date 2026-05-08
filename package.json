@@ -15,7 +15,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "wrangler": "^4.69.0"
+    "wrangler": "^4.90.0"
   },
   "dependencies": {
     "@sentry/cloudflare": "^10.21.0",
