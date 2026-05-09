@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeSourceUrl, sanitizeExtractedText } from '../src/ai-summary.js';
+import {
+  getCbcLiteUrl,
+  getSourceUrlCandidates,
+  normalizeSourceUrl,
+  sanitizeExtractedText
+} from '../src/ai-summary.js';
 
 test('summary sanitizer removes extractor metadata and page chrome', () => {
   const raw = `--- description: A 17-year-old in Brockville, Ont., has been charged with murder.
@@ -29,5 +34,22 @@ test('summary source URL normalization rewrites CBC apex host', () => {
   assert.equal(
     normalizeSourceUrl('https://www.cbc.ca/news/canada/ottawa/teen-charged-with-murder-9.7192167'),
     'https://www.cbc.ca/news/canada/ottawa/teen-charged-with-murder-9.7192167'
+  );
+});
+
+test('summary source candidates prefer CBC Lite story pages', () => {
+  const url = 'https://www.cbc.ca/news/canada/ottawa/teen-charged-with-murder-of-woman-2-daughters-in-brockville-9.7192167';
+
+  assert.equal(
+    getCbcLiteUrl(url),
+    'https://www.cbc.ca/lite/story/9.7192167'
+  );
+
+  assert.deepEqual(
+    getSourceUrlCandidates(url),
+    [
+      'https://www.cbc.ca/lite/story/9.7192167',
+      url
+    ]
   );
 });

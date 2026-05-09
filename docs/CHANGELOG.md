@@ -11,6 +11,8 @@
 - Added staging summary Taskfile targets that can seed deterministic test records from one or more URLs, queue summarization with the staging ingest token, fetch rendered pages, and inspect stored story summaries.
 - Added staging location-enrichment Taskfile targets and a staging-only bearer-token record action path for summary/location bakeoffs.
 - Tightened ingest extraction and candidate matching so specific communities such as First Nations are preferred over nearby reference cities, avoiding duplicate-record proposals when a source says an incident occurred on a community east/west/near a larger city.
+- Added CBC Lite story URL extraction for CBC article IDs so CBC sources summarize reliably when the main page extraction fails.
+- Triggered location enrichment after admin-created and ingest-created records so new records populate verified city and coordinates without waiting for manual backfill.
 
 ## 2026-05-04
 

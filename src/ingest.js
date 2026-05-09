@@ -10,6 +10,7 @@
 
 import * as Sentry from '@sentry/cloudflare';
 import { enqueueRecordSummary } from './ai-summary.js';
+import { enrichRecordLocation } from './ai-location.js';
 import { classifySourceType } from './source-classification.js';
 import { safeFetchPublicText, validateAndNormalizePublicHttpUrl } from './url-safety.js';
 
@@ -45,6 +46,8 @@ const STATUS_NEEDS_REVIEW = 'needs_review';
 const STATUS_DUPLICATE = 'duplicate';
 const STATUS_APPLIED = 'applied';
 const STATUS_REJECTED = 'rejected';
+
+const SUMMARY_REASON_INGEST_RECORD_CREATED = 'ingest_record_created';
 
 export function isIngestAPIPath(segments) {
   return Array.isArray(segments) && segments[2] === 'ingest';
@@ -433,7 +436,7 @@ async function approveCreateRecordProposal(env, proposal, body, approval) {
   return await attachStoryAndApplyProposal(env, proposal, targetRecordId, {
     agentConfidence,
     agentReason,
-    summaryReason: 'ingest_record_created',
+    summaryReason: SUMMARY_REASON_INGEST_RECORD_CREATED,
     decision: {
       applied_record_id: targetRecordId,
       applied_record: record.value
@@ -563,6 +566,10 @@ async function attachStoryAndApplyProposal(env, proposal, targetRecordId, option
     summaryQueue = { queued: false, reason: 'queue_error' };
   }
 
+  if (options.summaryReason === SUMMARY_REASON_INGEST_RECORD_CREATED) {
+    await enrichRecordLocationAfterIngest(env, targetRecordId);
+  }
+
   const existingDecision = parseJsonObject(proposal.decision_json);
   const decision = mergeJson(existingDecision, options.decision || null);
   const nowIso = new Date().toISOString();
@@ -600,6 +607,19 @@ async function attachStoryAndApplyProposal(env, proposal, targetRecordId, option
     summary_queue: summaryQueue,
     proposal: serializeProposalRow(updated)
   });
+}
+
+async function enrichRecordLocationAfterIngest(env, recordId) {
+  try {
+    const result = await enrichRecordLocation(env, recordId, { force: false, geocode: true });
+    if (!result?.ok) {
+      console.warn(
+        `Location enrichment skipped (ingest_record_created): record=${recordId}, status=${result?.status || 'unknown'}`
+      );
+    }
+  } catch (error) {
+    console.error('Failed to enrich record location after ingest create:', error);
+  }
 }
 
 async function rejectProposal(request, env, proposalId) {

@@ -699,9 +699,92 @@ export function normalizeSourceUrl(rawUrl) {
   }
 }
 
+export function getCbcLiteUrl(rawUrl) {
+  if (!rawUrl) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== 'cbc.ca' && host !== 'www.cbc.ca') {
+      return '';
+    }
+
+    if (parsed.pathname.startsWith('/lite/story/')) {
+      parsed.protocol = 'https:';
+      parsed.hostname = 'www.cbc.ca';
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.toString();
+    }
+
+    const storyId = parsed.pathname.match(/(?:^|[-/])(\d+\.\d+)(?:$|\/)/)?.[1] || '';
+    if (!storyId) {
+      return '';
+    }
+
+    return `https://www.cbc.ca/lite/story/${storyId}`;
+  } catch {
+    return '';
+  }
+}
+
 function getSafePublicHttpUrl(rawUrl) {
   const validation = validateAndNormalizePublicHttpUrl(rawUrl);
   return validation.ok ? validation.url : '';
+}
+
+function isCbcLiteStoryUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.hostname.toLowerCase() === 'www.cbc.ca' && parsed.pathname.startsWith('/lite/story/');
+  } catch {
+    return false;
+  }
+}
+
+function isCbcUrl(rawUrl) {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    return host === 'cbc.ca' || host === 'www.cbc.ca';
+  } catch {
+    return false;
+  }
+}
+
+function getSourceFetchHeaders(url) {
+  if (isCbcUrl(url)) {
+    return {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,text/markdown;q=0.8,text/plain;q=0.7,*/*;q=0.6',
+      'Accept-Language': 'en-CA,en;q=0.9'
+    };
+  }
+
+  return {
+    'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)',
+    'Accept': 'text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.9, text/plain;q=0.8, */*;q=0.7'
+  };
+}
+
+export function getSourceUrlCandidates(rawUrl) {
+  const normalizedUrl = normalizeSourceUrl(rawUrl || '');
+  const cbcLiteUrl = getCbcLiteUrl(normalizedUrl || rawUrl || '');
+  const candidates = [cbcLiteUrl, normalizedUrl, rawUrl || '']
+    .map(getSafePublicHttpUrl)
+    .filter(Boolean);
+
+  return Array.from(new Set(candidates));
+}
+
+function getProxyFallbackUrlCandidates(urlCandidates) {
+  return [...urlCandidates].sort((left, right) => {
+    const leftLite = isCbcLiteStoryUrl(left);
+    const rightLite = isCbcLiteStoryUrl(right);
+    if (leftLite === rightLite) return 0;
+    return leftLite ? 1 : -1;
+  });
 }
 
 async function getStoryText(story, sourceType, env, runtimeState) {
@@ -718,11 +801,7 @@ async function getStoryText(story, sourceType, env, runtimeState) {
     };
   }
 
-  const normalizedUrl = normalizeSourceUrl(story.url || '');
-  const safeCandidates = [normalizedUrl, story.url || '']
-    .map(getSafePublicHttpUrl)
-    .filter(Boolean);
-  const urlCandidates = Array.from(new Set(safeCandidates));
+  const urlCandidates = getSourceUrlCandidates(story.url || '');
 
   let best = {
     text: existingBodyText.slice(0, MAX_STORY_TEXT_CHARS),
@@ -763,24 +842,41 @@ async function getStoryText(story, sourceType, env, runtimeState) {
   const primaryFetchUrl = urlCandidates[0] || '';
   const shouldTryFallback = sourceType !== 'social' && primaryFetchUrl && !isProxyUrl(primaryFetchUrl) && !runtimeState?.subrequestLimited;
   if (shouldTryFallback && best.score < 4) {
+    const fallbackCandidates = getProxyFallbackUrlCandidates(urlCandidates);
+
     if (isSummarizeDaemonFallbackEnabled(env)) {
-      const extracted = await fetchViaSummarizeDaemon(primaryFetchUrl, env, runtimeState);
-      if (isBetterExtraction(extracted, best)) {
-        best = extracted;
+      for (const candidate of fallbackCandidates) {
+        const extracted = await fetchViaSummarizeDaemon(candidate, env, runtimeState);
+        if (isBetterExtraction(extracted, best)) {
+          best = extracted;
+        }
+        if (best.score >= 4 || runtimeState?.subrequestLimited) {
+          break;
+        }
       }
     }
 
     if (isJinaFallbackEnabled(env) && !runtimeState?.subrequestLimited) {
-      const extracted = await fetchViaJinaReader(primaryFetchUrl, runtimeState);
-      if (isBetterExtraction(extracted, best)) {
-        best = extracted;
+      for (const candidate of fallbackCandidates) {
+        const extracted = await fetchViaJinaReader(candidate, runtimeState);
+        if (isBetterExtraction(extracted, best)) {
+          best = extracted;
+        }
+        if (best.score >= 4 || runtimeState?.subrequestLimited) {
+          break;
+        }
       }
     }
 
     if (isMarkdownNewFallbackEnabled(env) && best.score < 4 && !runtimeState?.subrequestLimited) {
-      const extracted = await fetchViaMarkdownNew(primaryFetchUrl, runtimeState);
-      if (isBetterExtraction(extracted, best)) {
-        best = extracted;
+      for (const candidate of fallbackCandidates) {
+        const extracted = await fetchViaMarkdownNew(candidate, runtimeState);
+        if (isBetterExtraction(extracted, best)) {
+          best = extracted;
+        }
+        if (best.score >= 4 || runtimeState?.subrequestLimited) {
+          break;
+        }
       }
     }
   }
@@ -806,18 +902,28 @@ async function fetchAndExtractFromUrl(url, runtimeState) {
   try {
     const fetched = await safeFetchPublicText(url, {
       maxBytes: MAX_SOURCE_FETCH_BYTES,
-      headers: {
-        'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)',
-        'Accept': 'text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.9, text/plain;q=0.8, */*;q=0.7'
-      }
+      requirePublicDns: !isCbcLiteStoryUrl(url),
+      headers: getSourceFetchHeaders(url)
     });
 
     if (!fetched.ok) {
+      logSummaryEvent('ai_summary_source_fetch_skipped', {
+        status: 'skipped',
+        method: 'direct',
+        reason: fetched.error || 'unknown',
+        url
+      });
       return makeExtractionResult('', 'fetch_blocked', url);
     }
 
     const { response, text, finalUrl } = fetched;
     if (!response.ok) {
+      logSummaryEvent('ai_summary_source_fetch_skipped', {
+        status: 'skipped',
+        method: 'direct',
+        reason: `http_${response.status}`,
+        url: finalUrl || url
+      });
       return null;
     }
 
@@ -861,17 +967,30 @@ async function fetchViaJinaReader(url, runtimeState) {
     const proxyUrl = `https://r.jina.ai/${url}`;
     const fetched = await safeFetchPublicText(proxyUrl, {
       maxBytes: MAX_SOURCE_FETCH_BYTES,
+      requirePublicDns: false,
       headers: {
         'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)'
       }
     });
 
     if (!fetched.ok) {
+      logSummaryEvent('ai_summary_source_fetch_skipped', {
+        status: 'skipped',
+        method: 'jina_reader',
+        reason: fetched.error || 'unknown',
+        url
+      });
       return null;
     }
 
     const { response, text } = fetched;
     if (!response.ok) {
+      logSummaryEvent('ai_summary_source_fetch_skipped', {
+        status: 'skipped',
+        method: 'jina_reader',
+        reason: `http_${response.status}`,
+        url
+      });
       return null;
     }
 
@@ -888,6 +1007,7 @@ async function fetchViaMarkdownNew(url, runtimeState) {
     const fetched = await safeFetchPublicText('https://markdown.new/', {
       method: 'POST',
       maxBytes: MAX_SOURCE_FETCH_BYTES,
+      requirePublicDns: false,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'MassMurderCanadaBot/1.0 (+https://massmurdercanada.org)'
@@ -900,11 +1020,23 @@ async function fetchViaMarkdownNew(url, runtimeState) {
     });
 
     if (!fetched.ok) {
+      logSummaryEvent('ai_summary_source_fetch_skipped', {
+        status: 'skipped',
+        method: 'markdown_new',
+        reason: fetched.error || 'unknown',
+        url
+      });
       return null;
     }
 
     const { response, text } = fetched;
     if (!response.ok) {
+      logSummaryEvent('ai_summary_source_fetch_skipped', {
+        status: 'skipped',
+        method: 'markdown_new',
+        reason: `http_${response.status}`,
+        url
+      });
       return null;
     }
 

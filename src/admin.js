@@ -27,6 +27,19 @@ async function enqueueRecordSummaryWithWarning(env, recordId, reason, context) {
   }
 }
 
+async function enrichRecordLocationWithWarning(env, recordId, context) {
+  try {
+    const result = await enrichRecordLocation(env, recordId, { force: false, geocode: true });
+    if (!result?.ok) {
+      console.warn(
+        `Location enrichment skipped (${context}): record=${recordId}, status=${result?.status || 'unknown'}`
+      );
+    }
+  } catch (error) {
+    console.error(`Failed to enrich record location (${context}):`, error);
+  }
+}
+
 function parseBooleanFlag(value, defaultValue = false) {
   if (value === undefined || value === null || value === '') return defaultValue;
   const normalized = String(value).trim().toLowerCase();
@@ -478,6 +491,8 @@ async function createRecord(request, env) {
         console.error('Failed to enqueue record summary after create:', error);
       }
     }
+
+    await enrichRecordLocationWithWarning(env, body.id, 'record_create');
     
     return new Response(JSON.stringify({ 
       success: true, 
