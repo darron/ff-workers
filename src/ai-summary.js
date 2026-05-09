@@ -674,7 +674,7 @@ function extractAiText(result) {
   return null;
 }
 
-function normalizeSourceUrl(rawUrl) {
+export function normalizeSourceUrl(rawUrl) {
   if (!rawUrl) {
     return '';
   }
@@ -686,6 +686,11 @@ function normalizeSourceUrl(rawUrl) {
     // RCMP links often canonicalize to rcmp.ca and become easier to extract.
     if (host === 'rcmp-grc.gc.ca' || host === 'www.rcmp-grc.gc.ca') {
       parsed.hostname = 'www.rcmp.ca';
+    }
+
+    // CBC article pages extract more reliably through fallbacks on www.cbc.ca.
+    if (host === 'cbc.ca') {
+      parsed.hostname = 'www.cbc.ca';
     }
 
     return parsed.toString();

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sanitizeExtractedText } from '../src/ai-summary.js';
+import { normalizeSourceUrl, sanitizeExtractedText } from '../src/ai-summary.js';
 
 test('summary sanitizer removes extractor metadata and page chrome', () => {
   const raw = `--- description: A 17-year-old in Brockville, Ont., has been charged with murder.
@@ -18,4 +18,16 @@ A 49-year-old woman and her 17 and 15-year-old daughters are dead in what police
   assert.doesNotMatch(sanitized, /window\.articleTemplate/);
   assert.doesNotMatch(sanitized, /Share this Story/);
   assert.doesNotMatch(sanitized, /image: https/);
+});
+
+test('summary source URL normalization rewrites CBC apex host', () => {
+  assert.equal(
+    normalizeSourceUrl('https://cbc.ca/news/canada/ottawa/teen-charged-with-murder-9.7192167'),
+    'https://www.cbc.ca/news/canada/ottawa/teen-charged-with-murder-9.7192167'
+  );
+
+  assert.equal(
+    normalizeSourceUrl('https://www.cbc.ca/news/canada/ottawa/teen-charged-with-murder-9.7192167'),
+    'https://www.cbc.ca/news/canada/ottawa/teen-charged-with-murder-9.7192167'
+  );
 });
