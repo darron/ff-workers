@@ -13,6 +13,20 @@ const NO_TEXT_SUMMARY = 'No article text available for reliable summarization.';
 const SOCIAL_ONLY_SUMMARY = 'Social-media source only. Treat this as alleged until corroborated by independent reporting.';
 const UNSAFE_URL_SUMMARY = 'Source URL blocked by safety policy (must be public http/https).';
 
+const PAGE_CHROME_PATTERNS = [
+  /\bwindow\.[a-zA-Z0-9_$]+\s*=\s*["'][^"']*["'];?/g,
+  /\bShare this Story\s*:/gi,
+  /\bCopy Link\b/gi,
+  /\bEmail X Reddit Pinterest LinkedIn Tumblr\b/gi,
+  /\bBreadcrumb Trail Links\b/gi,
+  /\bThis section is Presented\b[\s\S]{0,240}?\bpublication\b/gi,
+  /\bSave New subscriber benefit\b/gi,
+  /\bSign In\b/gi,
+  /\bSubscribe\b/gi
+];
+
+const YAML_FRONT_MATTER_REGEX = /^\s*---\s+[\s\S]{0,1200}?\s+---\s*/;
+
 export function isAiSummaryEnabled(env) {
   return String(env?.AI_SUMMARY_ENABLED || 'false').toLowerCase() === 'true';
 }
@@ -314,11 +328,13 @@ async function summarizeRecordChunk(recordId, env, { offset = 0, storiesPerJob =
 async function refreshStorySummaryIfNeeded(env, story, runtimeState = createRuntimeState()) {
   const existingSummary = (story.ai_summary || '').trim();
   const hasCorruptPdfSummary = looksLikeBinaryPdfText(existingSummary);
+  const hasNoisySummary = looksLikeExtractorNoise(existingSummary);
   const shouldAttemptSummary =
     !existingSummary ||
     existingSummary === NO_TEXT_SUMMARY ||
     existingSummary === UNSAFE_URL_SUMMARY ||
-    hasCorruptPdfSummary;
+    hasCorruptPdfSummary ||
+    hasNoisySummary;
   if (!shouldAttemptSummary) {
     return {
       action: 'skipped_existing',
@@ -394,26 +410,29 @@ async function refreshStorySummaryIfNeeded(env, story, runtimeState = createRunt
 }
 
 async function summarizeStoryText(env, url, sourceType, storyText, runtimeState) {
+  const cleanedStoryText = sanitizeExtractedText(storyText);
   if (runtimeState?.subrequestLimited) {
-    return heuristicSummary(storyText);
+    return heuristicSummary(cleanedStoryText);
   }
 
   if (!isAiSummaryEnabled(env) || !env?.AI) {
-    return heuristicSummary(storyText);
+    return heuristicSummary(cleanedStoryText);
   }
 
   const prompt = [
-    'Summarize this source in 3-5 factual sentences.',
+    'Summarize this source in 3-5 concise factual sentences.',
     'Return only the summary text. Do not include introductory phrases.',
     'Do not speculate. If details are uncertain, say so explicitly.',
+    'Ignore navigation, subscription prompts, share links, metadata, scripts, image URLs, and other page chrome.',
+    'Do not quote or reproduce raw HTML, Markdown front matter, JavaScript, URLs, or extractor metadata.',
     `Source type: ${sourceType}`,
     `URL: ${url || 'N/A'}`,
     '',
-    storyText
+    cleanedStoryText
   ].join('\n');
 
   const aiText = await runAiText(env, prompt, 450, runtimeState);
-  return aiText || heuristicSummary(storyText);
+  return aiText || heuristicSummary(cleanedStoryText);
 }
 
 async function buildRecordSummary(env, record, stories, runtimeState) {
@@ -422,7 +441,7 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
 
   const sourceRows = stories.map(story => {
     const sourceType = classifySourceType(story.url || '');
-    const summary = (story.ai_summary || '').trim().slice(0, MAX_STORY_SUMMARY_CHARS);
+    const summary = sanitizeExtractedText(story.ai_summary || '').slice(0, MAX_STORY_SUMMARY_CHARS);
     return {
       id: story.id,
       url: story.url || '',
@@ -446,12 +465,19 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
 
   const prompt = [
     'Create a cross-source synthesis for this incident.',
-    'Output markdown with sections exactly:',
-    '1) Classification',
-    '2) Incident Summary',
-    '3) Well-Supported Details',
-    '4) Unverified or Conflicting Claims',
-    '5) Source Quality Notes',
+    'Return clean, readable markdown only. Do not use raw HTML.',
+    'Use these labels exactly, in this order:',
+    '**Classification:**',
+    '**Incident Summary:**',
+    '**Well-Supported Details:**',
+    '**Unverified or Conflicting Claims:**',
+    '**Source Quality Notes:**',
+    'Write the classification as one of: alleged, reported, corroborated.',
+    'Write the incident summary as one short paragraph.',
+    'Write the detail sections as bullets.',
+    'Do not copy source summaries verbatim.',
+    'Do not include page chrome, share links, scripts, metadata, image URLs, or extractor artifacts.',
+    'Do not mention source numbers unless necessary to describe a conflict.',
     '',
     'Classification rules:',
     '- alleged: only social-media claims and no independent credible sources',
@@ -474,7 +500,7 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
   const aiText = await runAiText(env, prompt, 900, runtimeState);
   if (aiText) {
     return {
-      text: aiText,
+      text: normalizeSynthesisClassification(aiText, credibility.classification),
       mode: 'ai',
       sourceCount: orderedRows.length,
       omittedCount
@@ -489,29 +515,51 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
   };
 }
 
+function normalizeSynthesisClassification(text, classification) {
+  const normalizedClassification = String(classification || '').trim().toLowerCase();
+  if (!['alleged', 'reported', 'corroborated'].includes(normalizedClassification)) {
+    return text;
+  }
+
+  const raw = String(text || '').trim();
+  if (!raw) {
+    return raw;
+  }
+
+  const classificationPattern = /(\*\*Classification:\*\*\s*(?:<br\s*\/?>\s*)?)(alleged|reported|corroborated)\b/i;
+  if (classificationPattern.test(raw)) {
+    return raw.replace(classificationPattern, `$1${normalizedClassification}`);
+  }
+
+  return [
+    `**Classification:** ${normalizedClassification}`,
+    '',
+    raw
+  ].join('\n');
+}
+
 function buildNonAiSynthesis(record, credibility, rows, omittedCount) {
   const classification = credibility.classification;
   const recordYear = extractYearOnly(record.date);
-  const topFacts = rows
+  const cleanRows = rows
     .filter(row => row.summary)
-    .slice(0, 5)
-    .map((row, index) => `${index + 1}. ${row.summary}`)
-    .join('\n');
+    .map(row => sanitizeExtractedText(row.summary))
+    .filter(summary => summary && !looksLikeExtractorNoise(summary));
+  const topFacts = cleanRows.slice(0, 5).map(summary => `- ${summary}`).join('\n');
 
   return [
-    '## Classification',
-    classification,
+    `**Classification:** ${classification}`,
     '',
-    '## Incident Summary',
+    '**Incident Summary:**',
     `Automated fallback summary for ${record.name || 'incident'} in ${record.city || 'unknown location'} (${recordYear || 'unknown year'}).`,
     '',
-    '## Well-Supported Details',
+    '**Well-Supported Details:**',
     topFacts || 'No high-quality source summaries are available yet.',
     '',
-    '## Unverified or Conflicting Claims',
+    '**Unverified or Conflicting Claims:**',
     credibility.socialOnly ? 'Claims currently rely on social sources and should be treated as alleged until corroborated.' : 'No specific conflicts extracted in fallback mode.',
     '',
-    '## Source Quality Notes',
+    '**Source Quality Notes:**',
     `Credible: ${credibility.credible}, Social: ${credibility.social}, Other: ${credibility.other}`,
     omittedCount > 0 ? `Additional sources omitted from synthesis due to context limits: ${omittedCount}.` : 'All available sources were included.'
   ].join('\n');
@@ -579,7 +627,9 @@ async function runAiText(env, prompt, maxTokens = 500, runtimeState) {
           content: prompt
         }
       ],
+      chat_template_kwargs: { enable_thinking: false },
       max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       temperature: 0.2
     });
 
@@ -651,7 +701,9 @@ function getSafePublicHttpUrl(rawUrl) {
 
 async function getStoryText(story, sourceType, env, runtimeState) {
   const rawExistingBodyText = normalizeText(story.body_text || '');
-  const existingBodyText = looksLikeBinaryPdfText(rawExistingBodyText) ? '' : rawExistingBodyText;
+  const existingBodyText = looksLikeBinaryPdfText(rawExistingBodyText)
+    ? ''
+    : sanitizeExtractedText(rawExistingBodyText);
   if (existingBodyText.length >= 500) {
     return {
       text: existingBodyText.slice(0, MAX_STORY_TEXT_CHARS),
@@ -901,9 +953,7 @@ async function fetchViaSummarizeDaemon(url, env, runtimeState) {
     }
 
     // Some daemon variants may return extracted text directly.
-    const directText = normalizeText(
-      startJson.text || startJson.content || startJson.summary || startJson.markdown || ''
-    );
+    const directText = extractSummarizeDaemonText(startJson);
     if (directText) {
       return makeExtractionResult(directText, 'summarize_daemon_direct', url);
     }
@@ -917,12 +967,55 @@ async function fetchViaSummarizeDaemon(url, env, runtimeState) {
       return null;
     }
 
-    return makeExtractionResult(normalizeText(eventsText), 'summarize_daemon_sse', url);
+    return makeExtractionResult(extractTextFromDaemonCandidate(eventsText) || eventsText, 'summarize_daemon_sse', url);
   } catch (error) {
     markSubrequestLimited(runtimeState, error, 'fetch_summarize_daemon', url);
     console.error(`Failed summarize daemon fallback for ${url}:`, error);
     return null;
   }
+}
+
+function extractSummarizeDaemonText(payload) {
+  const candidates = [
+    payload?.text,
+    payload?.content,
+    payload?.summary,
+    payload?.markdown
+  ];
+
+  for (const candidate of candidates) {
+    const extracted = extractTextFromDaemonCandidate(candidate);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return '';
+}
+
+function extractTextFromDaemonCandidate(candidate) {
+  if (!candidate) {
+    return '';
+  }
+
+  if (typeof candidate === 'object') {
+    return extractSummarizeDaemonText(candidate);
+  }
+
+  const raw = String(candidate || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  if (raw.startsWith('{')) {
+    try {
+      return extractSummarizeDaemonText(JSON.parse(raw));
+    } catch {
+      // Fall through and treat the value as text.
+    }
+  }
+
+  return normalizeText(cleanMarkdownServiceOutput(raw));
 }
 
 async function fetchSummarizeEventsText(daemonBase, runId, headers) {
@@ -995,7 +1088,7 @@ function parseSseText(rawSse) {
 }
 
 function makeExtractionResult(text, method, url) {
-  const normalized = normalizeText(text || '');
+  const normalized = sanitizeExtractedText(text || '');
   return {
     text: normalized,
     method,
@@ -1038,6 +1131,9 @@ function scoreExtraction(text, method) {
 
   if (looksLikeBoilerplate(normalized)) {
     score -= 2;
+  }
+  if (looksLikeExtractorNoise(normalized)) {
+    score -= 3;
   }
 
   return Math.max(0, score);
@@ -1131,6 +1227,31 @@ function looksLikeBoilerplate(text) {
 
   const hits = boilerplateSignals.reduce((count, signal) => count + (lower.includes(signal) ? 1 : 0), 0);
   return hits >= 4 && text.length < 1800;
+}
+
+function looksLikeExtractorNoise(text) {
+  const normalized = normalizeText(text || '');
+  if (!normalized || normalized.length < 80) {
+    return false;
+  }
+
+  const lower = normalized.toLowerCase();
+  const signals = [
+    'window.articletemplate',
+    'share this story',
+    'copy link email x reddit pinterest linkedin tumblr',
+    'breadcrumb trail links',
+    'this section is presented',
+    'save new subscriber benefit',
+    'markdown content:',
+    'url source:',
+    '--- description:',
+    'image: https://',
+    'loaded [',
+    'sign in create free account'
+  ];
+  const hits = signals.reduce((count, signal) => count + (lower.includes(signal) ? 1 : 0), 0);
+  return hits >= 1 || (hits > 0 && normalized.length > 500);
 }
 
 function extractStructuredTextFromHtml(html) {
@@ -1318,7 +1439,8 @@ function extractTextFromHtml(html) {
 
 function cleanMarkdownServiceOutput(text) {
   const normalized = String(text || '').replace(/\r\n?/g, '\n');
-  const lines = normalized.split('\n');
+  const withoutFrontMatter = normalized.replace(YAML_FRONT_MATTER_REGEX, '');
+  const lines = withoutFrontMatter.split('\n');
   const filtered = [];
   let seenMarkdownBody = false;
 
@@ -1347,9 +1469,52 @@ function cleanMarkdownServiceOutput(text) {
   return filtered.join('\n');
 }
 
+export function sanitizeExtractedText(text) {
+  let cleaned = decodeHtmlEntities(String(text || ''))
+    .replace(YAML_FRONT_MATTER_REGEX, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]{0,80}\]\([^)]*\)/g, match => {
+      const label = match.match(/^\[([^\]]*)\]/)?.[1] || '';
+      return label;
+    });
+
+  for (const pattern of PAGE_CHROME_PATTERNS) {
+    cleaned = cleaned.replace(pattern, ' ');
+  }
+
+  cleaned = cleaned
+    .replace(/["']?\/?>\s*/g, ' ')
+    .replace(/\b[a-zA-Z0-9_$]+\.[a-zA-Z0-9_$]+\s*=\s*[^;]{0,160};?/g, ' ')
+    .replace(/\bhttps?:\/\/\S+\.(?:jpg|jpeg|png|gif|webp)(?:\?\S*)?/gi, ' ')
+    .replace(/\b(?:Home|News|Local News|Canada|Ontario|Alberta|Updated|Published)\b(?:\s+){0,2}/g, match => {
+      const words = match.trim().split(/\s+/);
+      return words.length <= 2 ? ' ' : match;
+    });
+
+  return normalizeText(cleaned);
+}
+
 function stripHtmlTags(html) {
   return String(html || '')
     .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&#(\d+);/g, (_, code) => {
+      const value = Number.parseInt(code, 10);
+      return Number.isFinite(value) ? String.fromCodePoint(value) : ' ';
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => {
+      const value = Number.parseInt(code, 16);
+      return Number.isFinite(value) ? String.fromCodePoint(value) : ' ';
+    })
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')

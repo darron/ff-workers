@@ -17,6 +17,8 @@ vars:
     sh: printf '%s' "$RECORD_ID"
   LOCAL_SEARCH_QUERY:
     sh: printf '%s' "$SEARCH_QUERY"
+  LOCAL_SUMMARY_TEST_URL:
+    sh: printf '%s' "$URL"
 
 tasks:
   staging:deploy:
@@ -33,9 +35,9 @@ tasks:
     desc: Delete one staging record and its attached stories by RECORD_ID.
     silent: true
     preconditions:
-      - sh: test -n "$RECORD_ID"
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
         msg: Pass RECORD_ID as a task variable.
-      - sh: printf '%s' "$RECORD_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
         msg: RECORD_ID must be a UUID.
     env:
       RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
@@ -46,6 +48,119 @@ tasks:
       - >
         npx wrangler d1 execute massmurdercanada --env staging --remote
         --command "DELETE FROM records WHERE id = '$RECORD_ID'"
+
+  staging:record:get:
+    desc: Fetch a rendered staging record page by RECORD_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - curl -sS "{{.STAGING_BASE_URL}}/records/$RECORD_ID"
+
+  staging:record:stories:
+    desc: Inspect staging story summaries for RECORD_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - >
+        npx wrangler d1 execute massmurdercanada --env staging --remote
+        --command "SELECT id, url, substr(body_text, 1, 240) AS body_preview, substr(ai_summary, 1, 900) AS summary_preview FROM news_stories WHERE record_id = '$RECORD_ID' ORDER BY id"
+
+  staging:record:location:
+    desc: Inspect staging location enrichment fields for RECORD_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - >
+        npx wrangler d1 execute massmurdercanada --env staging --remote
+        --command "SELECT id, city, province, city_verified, city_confidence, city_verification_source, city_verification_notes, location_lat, location_lon, location_source, location_confidence, location_last_checked_at FROM records WHERE id = '$RECORD_ID'"
+
+  staging:record:summarize:
+    desc: Queue AI summary generation for one staging record by RECORD_ID using the staging ingest token.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - >
+        curl -sS -X POST "{{.STAGING_BASE_URL}}/admin/api/records/$RECORD_ID/summarize"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  staging:record:enrich-location:
+    desc: Run AI location enrichment for one staging record by RECORD_ID using the staging ingest token.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+      FORCE: '{{.FORCE | default "true"}}'
+      GEOCODE: '{{.GEOCODE | default "true"}}'
+      MIN_CONFIDENCE: '{{.MIN_CONFIDENCE | default ""}}'
+    cmds:
+      - >
+        curl -sS -X POST "{{.STAGING_BASE_URL}}/admin/api/records/$RECORD_ID/enrich-location?force=$FORCE&geocode=$GEOCODE&min_confidence=$MIN_CONFIDENCE"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  staging:summary:seed-url:
+    desc: Create a deterministic staging test record from URL, then queue summarization.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.URL | default .LOCAL_SUMMARY_TEST_URL}}"
+        msg: Pass URL as a task variable.
+    env:
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      URL: "{{.URL | default .LOCAL_SUMMARY_TEST_URL}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - >
+        sql_file="$(node scripts/staging-summary-seed.mjs
+        --url="$URL"
+        --record-id="$RECORD_ID"
+        --name="{{.NAME | default "Staging Summary Test"}}"
+        --city="{{.CITY | default "Brockville"}}"
+        --province="{{.PROVINCE | default "ON"}}"
+        --date="{{.DATE | default "2026"}}"
+        --victims="{{.VICTIMS | default "3"}}"
+        --deaths="{{.DEATHS | default "3"}}"
+        --injuries="{{.INJURIES | default "0"}}"
+        --devices="{{.DEVICES | default "Unknown"}}")" &&
+        npx wrangler d1 execute massmurdercanada --env staging --remote --file "$sql_file" &&
+        seeded_record_id="$(basename "$sql_file" .sql | sed 's/^ff-workers-staging-summary-//')" &&
+        curl -sS -X POST "{{.STAGING_BASE_URL}}/admin/api/records/$seeded_record_id/summarize"
+        -H "Authorization: Bearer $INGEST_API_TOKEN" &&
+        printf '\nSeeded staging record: {{.STAGING_BASE_URL}}/records/%s\n' "$seeded_record_id"
 
   staging:secret:ingest-token:
     desc: Set the staging INGEST_API_TOKEN secret from INGEST_API_TOKEN.

@@ -12,7 +12,7 @@ import {
 } from './db.js';
 import { renderCanadaMapPage, renderHomePage, renderRecordPage } from './templates.js';
 import { handleAdminAPI } from './admin.js';
-import { authenticate, destroySession, isAuthenticated, setSessionCookie, clearSessionCookie } from './auth.js';
+import { authenticate, destroySession, isAuthenticated, isIngestTokenAuthenticated, setSessionCookie, clearSessionCookie } from './auth.js';
 import { renderLoginPage, renderAdminDashboard } from './admin-ui.js';
 import { processSummaryQueue } from './ai-summary.js';
 
@@ -222,6 +222,10 @@ async function handleAdminRoutes(request, env, path, method) {
     return await handleAdminAPI(request, env, path, method);
   }
 
+  if (isStagingMachineRecordActionRoute(request, env, path, method)) {
+    return await handleAdminAPI(request, env, path, method);
+  }
+
   // Check authentication for other admin routes
   const authenticated = await isAuthenticated(request, env);
   if (!authenticated) {
@@ -260,4 +264,11 @@ async function handleAdminRoutes(request, env, path, method) {
   }
 
   return new Response('Admin page not found', { status: 404 });
+}
+
+function isStagingMachineRecordActionRoute(request, env, path, method) {
+  return String(env?.APP_ENV || '').toLowerCase() === 'staging' &&
+    method === 'POST' &&
+    /^\/admin\/api\/records\/[A-Za-z0-9_-]+\/(?:summarize|enrich-location)$/.test(path) &&
+    isIngestTokenAuthenticated(request, env);
 }
