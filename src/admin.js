@@ -85,6 +85,10 @@ export async function handleAdminAPI(request, env, path, method) {
     return await handleIngestAPI(request, env, method, segments);
   }
 
+  if (isStagingMachineRecordActionRequest(request, env, segments, method)) {
+    return await handleRecordsAPI(request, env, method, segments[3], segments[4]);
+  }
+
   // All non-ingest admin API routes require browser-session authentication.
   const authCheck = await requireAuth(request, env);
   if (authCheck) return authCheck;
@@ -114,6 +118,15 @@ export async function handleAdminAPI(request, env, path, method) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+function isStagingMachineRecordActionRequest(request, env, segments, method) {
+  return String(env?.APP_ENV || '').toLowerCase() === 'staging' &&
+    method === 'POST' &&
+    segments[2] === 'records' &&
+    segments[3] &&
+    (segments[4] === 'summarize' || segments[4] === 'enrich-location') &&
+    isIngestTokenAuthenticated(request, env);
 }
 
 async function handleSentryTestAPI(request, env, method) {

@@ -7,6 +7,10 @@
 - Replaced the deprecated Workers AI default model with `@cf/zai-org/glm-4.7-flash`.
 - Added OpenAI-compatible chat completion response handling for Workers AI models that return `choices`.
 - Enabled JSON mode and disabled model thinking for ingest and location JSON extraction calls so newer reasoning models return parseable JSON within existing token budgets.
+- Disabled model thinking for free-text story and record summaries, tightened summary prompts, and sanitized extractor/page chrome so generated record pages do not leak HTML, JavaScript, front matter, share links, or raw daemon metadata.
+- Added staging summary Taskfile targets that can seed deterministic test records from one or more URLs, queue summarization with the staging ingest token, fetch rendered pages, and inspect stored story summaries.
+- Added staging location-enrichment Taskfile targets and a staging-only bearer-token record action path for summary/location bakeoffs.
+- Tightened ingest extraction and candidate matching so specific communities such as First Nations are preferred over nearby reference cities, avoiding duplicate-record proposals when a source says an incident occurred on a community east/west/near a larger city.
 
 ## 2026-05-04
 

@@ -106,6 +106,35 @@ test('attach candidates require strong incident evidence beyond city and counts'
   assert.equal(__test.candidateHasStrongAttachEvidence({
     reasons: ['province', 'city', 'victims', 'deaths', 'devices']
   }), false);
+
+  assert.equal(__test.candidateHasStrongAttachEvidence({
+    reasons: ['year', 'province', 'city_in_source', 'victims', 'deaths', 'devices']
+  }), true);
+});
+
+test('incident city prefers specific community over nearby reference city', () => {
+  const sourceText = 'A 16-year-old boy who pleaded guilty to four counts of manslaughter in a quadruple homicide last year on Carry the Kettle Nakoda Nation, which is east of Regina, has been sentenced.';
+
+  assert.equal(
+    __test.normalizeIncidentCity('Regina', sourceText),
+    'Carry the Kettle Nakoda Nation'
+  );
+
+  assert.equal(
+    __test.candidateHardFieldsCompatible({
+      city: 'Carry the Kettle Nakoda Nation',
+      province: 'SK',
+      victims: 4,
+      deaths: 4,
+      reasons: ['city_in_source']
+    }, {
+      city: 'Regina',
+      province: 'SK',
+      victims: 4,
+      deaths: 4
+    }),
+    true
+  );
 });
 
 test('record search validates required filters and ranks structured candidates', () => {

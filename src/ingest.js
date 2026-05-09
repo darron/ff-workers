@@ -1651,12 +1651,20 @@ async function selectCandidateRecord(env, url, source, facts, candidates) {
 
 function candidateHasStrongAttachEvidence(candidate) {
   const reasons = new Set(candidate?.reasons || []);
+  const hasSpecificLocationWithCoreFacts = (
+    reasons.has('city_in_source') &&
+    reasons.has('year') &&
+    reasons.has('province') &&
+    reasons.has('victims') &&
+    reasons.has('deaths')
+  );
   return (
     reasons.has('event_date') ||
     reasons.has('near_event_date') ||
     reasons.has('year_from_event_date') ||
     reasons.has('name') ||
-    reasons.has('name_in_source')
+    reasons.has('name_in_source') ||
+    hasSpecificLocationWithCoreFacts
   );
 }
 
@@ -1669,7 +1677,8 @@ function candidateHardFieldsCompatible(candidate, facts) {
 
   const candidateCity = normalizeComparable(candidate.city);
   const factCity = normalizeComparable(facts.city);
-  if (candidateCity && factCity && candidateCity !== factCity) {
+  const candidateCityAppearsInSource = Array.isArray(candidate.reasons) && candidate.reasons.includes('city_in_source');
+  if (candidateCity && factCity && candidateCity !== factCity && !candidateCityAppearsInSource) {
     return false;
   }
 
@@ -1701,6 +1710,7 @@ async function extractIncidentFacts(env, url, source) {
     'Rules:',
     '- Use only evidence in the source.',
     '- record_name should be a short display name; prefer the accused/perpetrator surname when known.',
+    '- city must be the incident municipality, First Nation, reserve, or community; do not use a nearby reference city from phrases like "east of Regina" when a more specific community is named.',
     '- Use Canadian province abbreviations when possible.',
     '- If a value is not clearly stated, return null.',
     '- incident_date is the event/death/incident date, not the article publication date.',
@@ -1757,6 +1767,7 @@ async function extractIncidentFacts(env, url, source) {
   const recordName = sourceSupportsName(aiJson.record_name, sourceText) ? nullableString(aiJson.record_name) : null;
   const suspectName = sourceSupportsName(aiJson.suspect_name, sourceText) ? nullableString(aiJson.suspect_name) : null;
   const incidentName = sourceSupportsIncidentName(aiJson.incident_name, sourceText) ? nullableString(aiJson.incident_name) : null;
+  const city = normalizeIncidentCity(aiJson.city, sourceText);
 
   return {
     record_name: recordName,
@@ -1765,7 +1776,7 @@ async function extractIncidentFacts(env, url, source) {
     incident_date: incidentDate || null,
     year,
     date_basis: dateBasis,
-    city: nullableString(aiJson.city),
+    city,
     province: normalizeProvince(aiJson.province) || null,
     victims: nullableNumber(aiJson.victims),
     deaths: nullableNumber(aiJson.deaths),
@@ -1801,6 +1812,30 @@ function heuristicFacts(source) {
     confidence: source.text ? 0.25 : 0,
     reasoning: source.text ? 'Heuristic extraction only.' : 'No source text extracted.'
   };
+}
+
+function normalizeIncidentCity(city, sourceText = '') {
+  const directCity = nullableString(city);
+  const source = normalizeText(sourceText || '');
+  if (!directCity || !source) {
+    return directCity;
+  }
+
+  const escapedCity = escapeRegExp(directCity);
+  const nearbyPattern = new RegExp(
+    `\\b(?:on|in|at)\\s+([A-Z][A-Za-z'’.-]*(?:\\s+(?:the|[A-Z][A-Za-z'’.-]*)){0,8}\\s+(?:First Nation|Nakoda Nation|Nation|Reserve))\\b[^.]{0,120}\\b(?:east|west|north|south|near|outside|outside of)\\s+(?:of\\s+)?${escapedCity}\\b`,
+    ''
+  );
+  const nearbyMatch = source.match(nearbyPattern);
+  if (nearbyMatch?.[1]) {
+    return normalizeText(nearbyMatch[1]);
+  }
+
+  return directCity;
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function fetchSourceContent(url, env = {}) {
@@ -3035,6 +3070,7 @@ export const __test = {
   deriveEventDateFromSource,
   extractSourceFromHtml,
   fetchSourceContent,
+  normalizeIncidentCity,
   normalizeIncidentDate,
   parseJsonObject,
   parseRecordSearchParams,
