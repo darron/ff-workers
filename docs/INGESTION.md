@@ -26,6 +26,7 @@ task staging:secret:rotate-ingest-token
 task staging:ingest:create INGEST_API_TOKEN=... INGEST_TEST_URL=...
 task staging:ingest:search INGEST_API_TOKEN=... SEARCH_QUERY='city=Calgary&province=AB&date=2026-04-29'
 task staging:ingest:approve INGEST_API_TOKEN=... PROPOSAL_ID=... RECORD_ID=... AGENT_CONFIDENCE=... AGENT_REASON=...
+task staging:ingest:approve INGEST_API_TOKEN=... PROPOSAL_ID=... RECORD_ID=... AGENT_CONFIDENCE=... AGENT_REASON=... FORCE_APPLY=true
 task staging:ingest:reject INGEST_API_TOKEN=... PROPOSAL_ID=... AGENT_CONFIDENCE=... AGENT_REASON=...
 task staging:record:delete RECORD_ID=...
 ```
@@ -104,7 +105,7 @@ Important response fields:
 - `decision.record_date_basis`: whether a proposed new record used an event date/year or publication-year fallback
 - `extracted_facts`: incident facts extracted from the source
 
-Only `worker_proposed` proposals are eligible for automatic agent approval.
+Only `worker_proposed` proposals are eligible for normal automatic agent approval. A `needs_review` proposal may be force-attached only when an agent has independently confirmed the target existing record, sends `force_apply: true`, and provides a high-confidence evidence-based reason.
 
 ## Search Records
 
@@ -173,6 +174,17 @@ Field corrections should go through the admin UI or a future reviewed `record_pa
 
 If the Worker proposes `create_record` but the agent finds a clearly matching existing record, the agent may approve with that existing `record_id` instead. The Worker will attach the story to that existing record and audit the decision as an agent redirect. Use this only when the existing record is a strong factual match; otherwise reject or leave for human review.
 
+For already-`needs_review` proposals, an agent may force-attach the source to an existing record only after structured search or equivalent review confirms the target. This path cannot create records, still requires the target record to exist, still checks duplicate URLs, and records the decision as `approve_force_attach`.
+
+```json
+{
+  "record_id": "existing-record-uuid",
+  "force_apply": true,
+  "agent_confidence": 0.92,
+  "agent_reason": "The source names the same incident, location, victim count, and later court update."
+}
+```
+
 ## Reject Proposal
 
 ```bash
@@ -206,10 +218,11 @@ curl -s "https://massmurdercanada.org/admin/api/ingest/proposals?status=needs_re
 The remote agent should:
 
 - submit URLs to create proposals
-- approve only `worker_proposed` proposals
+- normally approve only `worker_proposed` proposals
+- force-attach `needs_review` proposals only with `force_apply: true`, an existing `record_id`, and a specific evidence-based reason
 - include `record_id`, `agent_confidence`, and `agent_reason`
 - reject clear mismatches
-- leave `needs_review`, `duplicate`, and worker/agent disagreement cases for human review
+- leave `duplicate`, new-record uncertainty, and worker/agent disagreement cases for human review
 - report newly discovered canonical facts, such as a released suspect name, as a metadata-update candidate instead of silently changing records
 - never call the generic story CRUD endpoint directly unless a human explicitly asks it to bypass ingestion review
 
