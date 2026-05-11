@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-11
+
+### Agent Story Ingestion
+
+- Added a constrained `force_apply` approval path for already-`needs_review` ingest proposals so a bearer-token agent can attach a reviewed source to an existing record with explicit confidence and evidence.
+- Kept force attachment out of normal `worker_proposed` approvals, create-record creation, and duplicate URL writes; force decisions are audited as `approve_force_attach`.
+- Updated staging ingest approval tasks, ingestion docs, and remote-agent skill guidance for the force-attach path.
+
 ## 2026-05-08
 
 ### Workers AI Model Refresh

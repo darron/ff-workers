@@ -28,8 +28,9 @@ Always use the proposal flow:
 1. Submit URL to create a Worker proposal.
 2. Review the Worker proposal independently.
 3. Approve only when you agree with the proposed record.
-4. Reject clear mismatches.
-5. Leave uncertain cases in `needs_review`.
+4. Force-attach `needs_review` proposals only after independently confirming the exact existing record.
+5. Reject clear mismatches.
+6. Leave uncertain cases in `needs_review`.
 
 ## Create Proposal
 
@@ -67,7 +68,7 @@ Inspect:
 - `decision.proposed_record` when `proposed_action` is `create_record`
 - `decision.record_date_basis` for new-record date provenance
 
-Approve only `worker_proposed` proposals.
+Normal approval is only for `worker_proposed` proposals. Already-`needs_review` proposals require the explicit `force_apply: true` path described below.
 
 ## Search Existing Records
 
@@ -168,6 +169,17 @@ For `create_record` proposals that are actually duplicates of an existing incide
   "record_id": "worker-proposed-record-uuid",
   "agent_confidence": 0.92,
   "agent_reason": "The source describes a new Calgary incident with two child deaths."
+}
+```
+
+For already-`needs_review` proposals, you may force-attach only when you have independently confirmed the exact existing record through structured search or equivalent evidence. This is not a generic override for `worker_proposed` disagreements, and it cannot create records. Use a concrete evidence-based `agent_reason`.
+
+```json
+{
+  "record_id": "existing-record-uuid",
+  "force_apply": true,
+  "agent_confidence": 0.92,
+  "agent_reason": "The source names the same incident, location, victim count, and later court update."
 }
 ```
 

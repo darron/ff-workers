@@ -315,6 +315,142 @@ test('create-record proposal can be agent-redirected to an existing record', asy
   assert.equal(decision.worker_proposed_record_id, 'new-record-id');
 });
 
+test('needs-review attachment can be force-applied to an existing record', async () => {
+  const env = makeIngestApprovalEnv({
+    proposal: {
+      id: 'ingest_force_attach',
+      url: 'https://x.com/example/status/123',
+      normalized_url: 'https://x.com/example/status/123',
+      status: 'needs_review',
+      proposed_action: 'attach_to_record',
+      proposed_record_id: 'worker-record-id',
+      proposed_story_id: 'story_force_attach',
+      worker_confidence: 0.36,
+      worker_reason: 'Low confidence match to a different Surrey record.',
+      extracted_text: 'Social post text long enough to persist. '.repeat(20),
+      decision_json: JSON.stringify({ selected_record_id: null }),
+      created_at: '2026-05-10T00:00:00.000Z',
+      updated_at: '2026-05-10T00:00:00.000Z'
+    },
+    existingRecord: {
+      id: 'human-target-record-id',
+      name: 'Surrey double shooting'
+    }
+  });
+
+  const request = new Request('https://example.test/admin/api/ingest/proposals/ingest_force_attach/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: 'human-target-record-id',
+      force_apply: true,
+      agent_confidence: 0.9,
+      agent_reason: 'Human-reviewed source describes the same Surrey double shooting incident.'
+    })
+  });
+
+  const response = await __test.approveProposal(request, env, 'ingest_force_attach');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'applied');
+  assert.equal(body.record_id, 'human-target-record-id');
+  assert.equal(env.insertedStory.record_id, 'human-target-record-id');
+  assert.equal(env.updatedProposal.agent_decision, 'approve_force_attach');
+  assert.equal(env.summary.reason, 'ingest_force_attached');
+
+  const decision = JSON.parse(env.updatedProposal.decision_json);
+  assert.equal(decision.force_attach_record_id, 'human-target-record-id');
+  assert.equal(decision.previous_status, 'needs_review');
+  assert.equal(decision.worker_proposed_record_id, 'worker-record-id');
+});
+
+test('force attachment still requires evidence-based agent reason', async () => {
+  const env = makeIngestApprovalEnv({
+    proposal: {
+      id: 'ingest_force_short_reason',
+      url: 'https://x.com/example/status/456',
+      normalized_url: 'https://x.com/example/status/456',
+      status: 'needs_review',
+      proposed_action: 'attach_to_record',
+      proposed_record_id: 'worker-record-id',
+      proposed_story_id: 'story_force_short_reason',
+      worker_confidence: 0.36,
+      worker_reason: 'Low confidence.',
+      extracted_text: '',
+      decision_json: '{}',
+      created_at: '2026-05-10T00:00:00.000Z',
+      updated_at: '2026-05-10T00:00:00.000Z'
+    },
+    existingRecord: {
+      id: 'human-target-record-id',
+      name: 'Surrey double shooting'
+    }
+  });
+
+  const request = new Request('https://example.test/admin/api/ingest/proposals/ingest_force_short_reason/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: 'human-target-record-id',
+      force_apply: true,
+      agent_confidence: 0.9,
+      agent_reason: 'ok'
+    })
+  });
+
+  const response = await __test.approveProposal(request, env, 'ingest_force_short_reason');
+  const body = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(body.status, 'needs_review');
+  assert.equal(env.insertedStory, null);
+  assert.match(env.updatedProposal.error, /requires an evidence-based agent_reason/);
+});
+
+test('force attachment is limited to existing needs-review proposals', async () => {
+  const env = makeIngestApprovalEnv({
+    proposal: {
+      id: 'ingest_force_worker_proposed',
+      url: 'https://x.com/example/status/789',
+      normalized_url: 'https://x.com/example/status/789',
+      status: 'worker_proposed',
+      proposed_action: 'attach_to_record',
+      proposed_record_id: 'worker-record-id',
+      proposed_story_id: 'story_force_worker_proposed',
+      worker_confidence: 0.9,
+      worker_reason: 'Worker proposed a different existing record.',
+      extracted_text: 'Social post text long enough to persist. '.repeat(20),
+      decision_json: '{}',
+      created_at: '2026-05-10T00:00:00.000Z',
+      updated_at: '2026-05-10T00:00:00.000Z'
+    },
+    existingRecord: {
+      id: 'human-target-record-id',
+      name: 'Surrey double shooting'
+    }
+  });
+
+  const request = new Request('https://example.test/admin/api/ingest/proposals/ingest_force_worker_proposed/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: 'human-target-record-id',
+      force_apply: true,
+      agent_confidence: 0.9,
+      agent_reason: 'Human-reviewed source describes the same Surrey double shooting incident.'
+    })
+  });
+
+  const response = await __test.approveProposal(request, env, 'ingest_force_worker_proposed');
+  const body = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(body.status, 'needs_review');
+  assert.equal(env.insertedStory, null);
+  assert.match(env.updatedProposal.error, /only allowed for proposals already in needs_review/);
+});
+
 test('create-record redirect to a missing record remains needs_review', async () => {
   const env = makeIngestApprovalEnv({
     proposal: {

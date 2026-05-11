@@ -307,6 +307,15 @@ async function approveProposal(request, env, proposalId) {
     });
   }
 
+  const forceApply = body.force_apply === true || body.force === true;
+  if (forceApply) {
+    return await approveForcedAttachment(env, proposal, {
+      agentConfidence,
+      agentReason,
+      targetRecordId
+    });
+  }
+
   const workerRecordId = proposal.proposed_record_id || '';
   if (workerRecordId && targetRecordId !== workerRecordId) {
     return await markProposalNeedsReview(env, proposal, {
@@ -355,6 +364,101 @@ async function approveProposal(request, env, proposalId) {
     agentConfidence,
     agentReason,
     summaryReason: 'ingest_story_attached'
+  });
+}
+
+async function approveForcedAttachment(env, proposal, approval) {
+  const { agentConfidence, agentReason, targetRecordId } = approval;
+  const minAgentConfidence = getConfidenceThreshold(env, 'INGEST_AGENT_MIN_CONFIDENCE', DEFAULT_AGENT_MIN_CONFIDENCE);
+
+  if (proposal.status !== STATUS_NEEDS_REVIEW) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: 'Force attachment is only allowed for proposals already in needs_review.'
+    });
+  }
+
+  if (![ACTION_ATTACH_TO_RECORD, ACTION_NEEDS_REVIEW].includes(proposal.proposed_action)) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: 'Force attachment can only attach an existing-record or needs-review proposal to an existing record.'
+    });
+  }
+
+  if (!targetRecordId) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: 'Force attachment requires an explicit record_id.'
+    });
+  }
+
+  if (proposal.proposed_action === ACTION_CREATE_RECORD && targetRecordId === proposal.proposed_record_id) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: 'Force attachment cannot create records; approve create-record proposals normally or provide an existing record_id.'
+    });
+  }
+
+  if (agentConfidence < minAgentConfidence) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: `Force attachment confidence threshold not met. agent=${agentConfidence}.`
+    });
+  }
+
+  if (!agentReason || agentReason.length < 20) {
+    return await markProposalNeedsReview(env, proposal, {
+      agentConfidence,
+      agentReason,
+      error: 'Force attachment requires an evidence-based agent_reason.'
+    });
+  }
+
+  const duplicate = await findExistingStoryByUrl(env, proposal.normalized_url, proposal.url);
+  if (duplicate) {
+    const updated = await updateProposalStatus(env, proposal.id, {
+      status: STATUS_DUPLICATE,
+      agentConfidence,
+      agentReason,
+      agentDecision: 'approve_force_attach',
+      decision: {
+        duplicate_story_id: duplicate.id,
+        duplicate_record_id: duplicate.record_id,
+        duplicate_url: duplicate.url,
+        force_attach_record_id: targetRecordId,
+        previous_status: proposal.status,
+        worker_proposed_record_id: proposal.proposed_record_id || null,
+        worker_proposed_action: proposal.proposed_action || null
+      },
+      error: null
+    });
+
+    return jsonResponse({
+      success: false,
+      status: STATUS_DUPLICATE,
+      proposal: serializeProposalRow(updated),
+      duplicate
+    }, 409);
+  }
+
+  return await attachStoryAndApplyProposal(env, proposal, targetRecordId, {
+    agentConfidence,
+    agentReason,
+    summaryReason: 'ingest_force_attached',
+    agentDecision: 'approve_force_attach',
+    decision: {
+      applied_record_id: targetRecordId,
+      force_attach_record_id: targetRecordId,
+      previous_status: proposal.status,
+      worker_proposed_record_id: proposal.proposed_record_id || null,
+      worker_proposed_action: proposal.proposed_action || null,
+      worker_confidence: Number.isFinite(Number(proposal.worker_confidence)) ? Number(proposal.worker_confidence) : null
+    }
   });
 }
 

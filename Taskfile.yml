@@ -237,7 +237,7 @@ tasks:
         -H "Authorization: Bearer $INGEST_API_TOKEN"
 
   staging:ingest:approve:
-    desc: Approve one staging ingest proposal using PROPOSAL_ID, RECORD_ID, AGENT_CONFIDENCE, and AGENT_REASON.
+    desc: Approve one staging ingest proposal using PROPOSAL_ID, RECORD_ID, AGENT_CONFIDENCE, and AGENT_REASON. Set FORCE_APPLY=true only for needs_review attachment proposals.
     silent: true
     preconditions:
       - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
@@ -256,12 +256,13 @@ tasks:
       RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
       AGENT_CONFIDENCE: "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
       AGENT_REASON: "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+      FORCE_APPLY: "{{.FORCE_APPLY | default .LOCAL_FORCE_APPLY}}"
     cmds:
       - >
         curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/proposals/$PROPOSAL_ID/approve"
         -H "Authorization: Bearer $INGEST_API_TOKEN"
         -H "Content-Type: application/json"
-        -d "$(jq -cn --arg record_id "$RECORD_ID" --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" '{record_id:$record_id,agent_confidence:$agent_confidence,agent_reason:$agent_reason}')"
+        -d "$(jq -cn --arg record_id "$RECORD_ID" --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" --arg force_apply "$FORCE_APPLY" '{record_id:$record_id,agent_confidence:$agent_confidence,agent_reason:$agent_reason} + (if ($force_apply == "true" or $force_apply == "1") then {force_apply:true} else {} end)')"
 
   staging:ingest:reject:
     desc: Reject one staging ingest proposal using PROPOSAL_ID, AGENT_CONFIDENCE, and AGENT_REASON.
