@@ -88,4 +88,9 @@ test('record synthesis prompt distinguishes record name from location and dead s
   assert.match(prompt, /Incident location: Montreal, QC/);
   assert.match(prompt, /record display name is not part of the location/i);
   assert.match(prompt, /Do not say a suspect was apprehended/i);
+  assert.match(prompt, /Keep victim, bystander, officer, civilian, community-member, and suspect roles separate/i);
+  assert.match(prompt, /Never describe a person as the suspect, shooter, gunman, or attacker/i);
+  assert.match(prompt, /Do not list a victim or bystander name as a suspect-identity conflict/i);
+  assert.match(prompt, /victims are non-suspect fatalities/i);
+  assert.match(prompt, /Do not call two victim deaths versus three total deaths a conflict/i);
 });
