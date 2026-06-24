@@ -8,6 +8,7 @@
 - Tightened ingest extraction so dead suspects are excluded from victim-fatality counts while still counted in total deaths when the source says the suspect died.
 - Allowed reviewed create-record ingestion for narrow non-fatal police-firearm ambushes with at least two injured officers, so dbrain-authoritative law-enforcement shooting sources can be represented without bypassing the proposal flow.
 - Clarified AI record-summary synthesis prompts so record display names are not treated as incident locations and dead suspects are not described as apprehended unless a source says so.
+- Classified `rcmp.ca` as official and `ckom.com` as news so source badges, credibility notes, and AI synthesis prompts treat those incident sources as credible.
 
 ## 2026-05-11
 

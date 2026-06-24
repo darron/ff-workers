@@ -19,6 +19,7 @@ const SOCIAL_DOMAINS = [
 const OFFICIAL_DOMAINS = [
   'canada.ca',
   'gc.ca',
+  'rcmp.ca',
   'rcmp-grc.gc.ca',
   'justice.gc.ca',
   'ontario.ca',
@@ -46,6 +47,7 @@ const NEWS_HINTS = [
   'cbc.ca',
   'ctvnews.ca',
   'globalnews.ca',
+  'ckom.com',
   'thestar.com',
   'theglobeandmail.com',
   'nationalpost.com',
