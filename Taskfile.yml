@@ -72,6 +72,19 @@ tasks:
     cmds:
       - curl -sS "{{.STAGING_BASE_URL}}/records/$RECORD_ID"
 
+  staging:record:smoke:
+    desc: Smoke-test a rendered staging record page by RECORD_ID and print key summary/source fields.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - curl -sS "{{.STAGING_BASE_URL}}/records/$RECORD_ID" | node scripts/record-page-smoke.mjs
+
   staging:record:stories:
     desc: Inspect staging story summaries for RECORD_ID.
     silent: true
@@ -316,6 +329,34 @@ tasks:
         -H "Authorization: Bearer $INGEST_API_TOKEN"
         -H "Content-Type: application/json"
         -d "$(jq -cn --arg url "$INGEST_URL" '{url:$url}')"
+
+  production:record:get:
+    desc: Fetch a rendered production record page by RECORD_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - curl -sS "$BASE_URL/records/$RECORD_ID"
+
+  production:record:smoke:
+    desc: Smoke-test a rendered production record page by RECORD_ID and print key summary/source fields.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: printf '%s' "{{.RECORD_ID | default .LOCAL_RECORD_ID}}" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        msg: RECORD_ID must be a UUID.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+    cmds:
+      - curl -sS "$BASE_URL/records/$RECORD_ID" | node scripts/record-page-smoke.mjs
 
   production:ingest:get:
     desc: Fetch one production ingest proposal by PROPOSAL_ID.
