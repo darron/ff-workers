@@ -1836,6 +1836,11 @@ async function extractIncidentFacts(env, url, source) {
     '- record_name should be a short display name; prefer the accused/perpetrator surname when known.',
     '- city must be the incident municipality, First Nation, reserve, or community; do not use a nearby reference city from phrases like "east of Regina" when a more specific community is named.',
     '- Use Canadian province abbreviations when possible.',
+    '- victims is the number of non-perpetrator fatalities only; exclude any dead suspect, accused, shooter, gunman, or perpetrator.',
+    '- deaths is total deaths in the incident; include a dead suspect, shooter, gunman, or perpetrator when the source says they died.',
+    '- injuries is the number of non-fatal injured people; exclude people already counted as deaths.',
+    '- if the source says an officer/civilian and the suspect were killed, return victims=2 and deaths=3.',
+    '- if the source says three dead including the gunman/suspect, return victims=2 and deaths=3.',
     '- If a value is not clearly stated, return null.',
     '- incident_date is the event/death/incident date, not the article publication date.',
     '- never invent January 1; if only the event year is known, set incident_date to null and year to that event year.',
@@ -1893,7 +1898,7 @@ async function extractIncidentFacts(env, url, source) {
   const incidentName = sourceSupportsIncidentName(aiJson.incident_name, sourceText) ? nullableString(aiJson.incident_name) : null;
   const city = normalizeIncidentCity(aiJson.city, sourceText);
 
-  return {
+  return normalizeExtractedFacts({
     record_name: recordName,
     suspect_name: suspectName,
     incident_name: incidentName,
@@ -1909,7 +1914,73 @@ async function extractIncidentFacts(env, url, source) {
     firearms: typeof aiJson.firearms === 'boolean' ? aiJson.firearms : null,
     confidence: clamp(Number(aiJson.confidence), 0, 1),
     reasoning: normalizeText(aiJson.reasoning || '').slice(0, MAX_REASON_CHARS)
-  };
+  }, sourceText);
+}
+
+function normalizeExtractedFacts(facts, sourceText = '') {
+  const normalized = { ...(facts || {}) };
+  const text = normalizeText(sourceText).toLowerCase();
+  const victims = nullableNumber(normalized.victims);
+  const deaths = nullableNumber(normalized.deaths);
+
+  if (!text || !Number.isFinite(victims) || !Number.isFinite(deaths) || victims !== deaths || deaths <= 0) {
+    return normalized;
+  }
+
+  if (!sourceMentionsDeadSuspect(text, normalized.suspect_name)) {
+    return normalized;
+  }
+
+  const nonSuspectFatalities = extractNonSuspectFatalityCount(text);
+  if (Number.isFinite(nonSuspectFatalities) && nonSuspectFatalities >= 0 && nonSuspectFatalities < deaths) {
+    normalized.victims = nonSuspectFatalities;
+  }
+
+  return normalized;
+}
+
+function sourceMentionsDeadSuspect(text, suspectName = '') {
+  const suspectLastName = nullableString(suspectName)?.split(/\s+/).filter(Boolean).at(-1)?.toLowerCase() || '';
+  const suspectTerms = [
+    'suspect',
+    'shooter',
+    'gunman',
+    'perpetrator',
+    'assailant',
+    'accused'
+  ];
+
+  if (suspectLastName) {
+    suspectTerms.push(escapeRegExp(suspectLastName));
+  }
+
+  const termPattern = `(?:${suspectTerms.join('|')})`;
+  const deathPattern = '(?:killed|dead|died|shot dead|fatally shot|returned fire[^.!?]{0,80}killing him|returned fire[^.!?]{0,80}killing her)';
+  const before = new RegExp(`\\b${termPattern}\\b[^.!?]{0,140}\\b${deathPattern}\\b`, 'i');
+  const after = new RegExp(`\\b${deathPattern}\\b[^.!?]{0,140}\\b${termPattern}\\b`, 'i');
+  return before.test(text) || after.test(text);
+}
+
+function extractNonSuspectFatalityCount(text) {
+  const twoOthersPatterns = [
+    /\b(?:identified|confirmed|named)[^.!?]{0,120}\b(?:two|2)\s+others\s+killed\b/i,
+    /\b(?:two|2)\s+(?:other|additional)\s+(?:people|persons|victims|individuals)?\s*(?:were\s+)?(?:killed|dead|died)\b/i
+  ];
+  if (twoOthersPatterns.some((pattern) => pattern.test(text))) {
+    return 2;
+  }
+
+  const officerCivilianPatterns = [
+    /\b(?:a\s+)?(?:police\s+)?officer\b[^.!?]{0,120}\b(?:a\s+)?(?:civilian|bystander)\b[^.!?]{0,120}\b(?:killed|dead|died)\b/i,
+    /\b(?:a\s+)?(?:civilian|bystander)\b[^.!?]{0,120}\b(?:a\s+)?(?:police\s+)?officer\b[^.!?]{0,120}\b(?:killed|dead|died)\b/i,
+    /\b(?:a\s+)?(?:police\s+)?officer\s+and\s+(?:a\s+)?(?:civilian|bystander)\s+(?:were\s+)?(?:killed|dead|died)\b/i,
+    /\b(?:a\s+)?(?:civilian|bystander)\s+and\s+(?:a\s+)?(?:police\s+)?officer\s+(?:were\s+)?(?:killed|dead|died)\b/i
+  ];
+  if (officerCivilianPatterns.some((pattern) => pattern.test(text))) {
+    return 2;
+  }
+
+  return Number.NaN;
 }
 
 function heuristicFacts(source) {
@@ -3196,6 +3267,7 @@ export const __test = {
   fetchSourceContent,
   normalizeIncidentCity,
   normalizeIncidentDate,
+  normalizeExtractedFacts,
   parseJsonObject,
   parseRecordSearchParams,
   scoreRecordCandidate,

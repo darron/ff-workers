@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  __test,
   getCbcLiteUrl,
   getSourceUrlCandidates,
   normalizeSourceUrl,
@@ -52,4 +53,39 @@ test('summary source candidates prefer CBC Lite story pages', () => {
       url
     ]
   );
+});
+
+test('record synthesis prompt distinguishes record name from location and dead suspects from arrests', () => {
+  const prompt = __test.buildRecordSynthesisPrompt(
+    {
+      name: 'Hatfield',
+      city: 'Montreal',
+      province: 'QC',
+      date: '2026-06-22',
+      victims: 2,
+      deaths: 3,
+      injuries: 1,
+      devices_used: null,
+      warnings: null
+    },
+    {
+      classification: 'reported',
+      credible: 1,
+      social: 0,
+      other: 0
+    },
+    [
+      {
+        sourceType: 'other',
+        url: 'https://people.com/example',
+        summary: 'Police officer Mohamed Lamine Benredouane and civilian Michael Mizrahi were killed, and suspect Seth Hatfield was also killed.'
+      }
+    ],
+    0
+  );
+
+  assert.match(prompt, /Record display name: Hatfield/);
+  assert.match(prompt, /Incident location: Montreal, QC/);
+  assert.match(prompt, /record display name is not part of the location/i);
+  assert.match(prompt, /Do not say a suspect was apprehended/i);
 });

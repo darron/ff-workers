@@ -1,22 +1,32 @@
 version: '3'
 
 vars:
+  PRODUCTION_BASE_URL:
+    sh: if test -n "$MMC_BASE_URL"; then printf '%s' "$MMC_BASE_URL"; else printf '%s' 'https://massmurdercanada.org'; fi
   STAGING_BASE_URL: https://massmurdercanada-staging.darron.workers.dev
   STAGING_INGEST_TOKEN_FILE: /private/tmp/ff-workers-staging-ingest-token
   LOCAL_AGENT_CONFIDENCE:
     sh: printf '%s' "$AGENT_CONFIDENCE"
   LOCAL_AGENT_REASON:
     sh: printf '%s' "$AGENT_REASON"
+  LOCAL_FORCE_APPLY:
+    sh: printf '%s' "$FORCE_APPLY"
   LOCAL_INGEST_API_TOKEN:
     sh: if test -n "$INGEST_API_TOKEN"; then printf '%s' "$INGEST_API_TOKEN"; elif test -r /private/tmp/ff-workers-staging-ingest-token; then cat /private/tmp/ff-workers-staging-ingest-token; fi
+  LOCAL_INGEST_URL:
+    sh: if test -n "$INGEST_URL"; then printf '%s' "$INGEST_URL"; else printf '%s' "$URL"; fi
   LOCAL_INGEST_TEST_URL:
     sh: printf '%s' "$INGEST_TEST_URL"
+  LOCAL_LIMIT:
+    sh: printf '%s' "$LIMIT"
   LOCAL_PROPOSAL_ID:
     sh: printf '%s' "$PROPOSAL_ID"
   LOCAL_RECORD_ID:
     sh: printf '%s' "$RECORD_ID"
   LOCAL_SEARCH_QUERY:
     sh: printf '%s' "$SEARCH_QUERY"
+  LOCAL_STATUS:
+    sh: printf '%s' "$STATUS"
   LOCAL_SUMMARY_TEST_URL:
     sh: printf '%s' "$URL"
 
@@ -284,6 +294,129 @@ tasks:
     cmds:
       - >
         curl -sS "{{.STAGING_BASE_URL}}/admin/api/ingest/proposals/$PROPOSAL_ID/reject"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+        -H "Content-Type: application/json"
+        -d "$(jq -cn --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" '{agent_confidence:$agent_confidence,agent_reason:$agent_reason}')"
+
+  production:ingest:create:
+    desc: Create a production ingest proposal for INGEST_URL.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.INGEST_URL | default .LOCAL_INGEST_URL}}"
+        msg: Pass INGEST_URL as a task variable or environment variable.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      INGEST_URL: "{{.INGEST_URL | default .LOCAL_INGEST_URL}}"
+    cmds:
+      - >
+        curl -sS "$BASE_URL/admin/api/ingest/proposals"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+        -H "Content-Type: application/json"
+        -d "$(jq -cn --arg url "$INGEST_URL" '{url:$url}')"
+
+  production:ingest:get:
+    desc: Fetch one production ingest proposal by PROPOSAL_ID.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+        msg: Pass PROPOSAL_ID as a task variable.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      PROPOSAL_ID: "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+    cmds:
+      - >
+        curl -sS "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  production:ingest:list:
+    desc: List production ingest proposals, optionally filtered by STATUS.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      STATUS: '{{.STATUS | default .LOCAL_STATUS | default "needs_review"}}'
+      LIMIT: '{{.LIMIT | default .LOCAL_LIMIT | default "25"}}'
+    cmds:
+      - >
+        curl -sS "$BASE_URL/admin/api/ingest/proposals?status=$STATUS&limit=$LIMIT"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  production:ingest:search:
+    desc: Search production ingest candidate records with SEARCH_QUERY.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.SEARCH_QUERY | default .LOCAL_SEARCH_QUERY}}"
+        msg: Pass SEARCH_QUERY as a URL query string, without the leading question mark.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      SEARCH_QUERY: "{{.SEARCH_QUERY | default .LOCAL_SEARCH_QUERY}}"
+    cmds:
+      - >
+        curl -sS "$BASE_URL/admin/api/ingest/records/search?$SEARCH_QUERY"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+
+  production:ingest:approve:
+    desc: Approve one production ingest proposal using PROPOSAL_ID, RECORD_ID, AGENT_CONFIDENCE, and AGENT_REASON. Set FORCE_APPLY=true only for needs_review attachment proposals.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+        msg: Pass PROPOSAL_ID as a task variable.
+      - sh: test -n "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+        msg: Pass RECORD_ID as a task variable.
+      - sh: test -n "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
+        msg: Pass AGENT_CONFIDENCE as a task variable.
+      - sh: test -n "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+        msg: Pass AGENT_REASON as a task variable.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      PROPOSAL_ID: "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+      RECORD_ID: "{{.RECORD_ID | default .LOCAL_RECORD_ID}}"
+      AGENT_CONFIDENCE: "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
+      AGENT_REASON: "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+      FORCE_APPLY: "{{.FORCE_APPLY | default .LOCAL_FORCE_APPLY}}"
+    cmds:
+      - >
+        curl -sS "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/approve"
+        -H "Authorization: Bearer $INGEST_API_TOKEN"
+        -H "Content-Type: application/json"
+        -d "$(jq -cn --arg record_id "$RECORD_ID" --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" --arg force_apply "$FORCE_APPLY" '{record_id:$record_id,agent_confidence:$agent_confidence,agent_reason:$agent_reason} + (if ($force_apply == "true" or $force_apply == "1") then {force_apply:true} else {} end)')"
+
+  production:ingest:reject:
+    desc: Reject one production ingest proposal using PROPOSAL_ID, AGENT_CONFIDENCE, and AGENT_REASON.
+    silent: true
+    preconditions:
+      - sh: test -n "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+        msg: Pass INGEST_API_TOKEN as a task variable or environment variable.
+      - sh: test -n "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+        msg: Pass PROPOSAL_ID as a task variable.
+      - sh: test -n "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
+        msg: Pass AGENT_CONFIDENCE as a task variable.
+      - sh: test -n "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+        msg: Pass AGENT_REASON as a task variable.
+    env:
+      BASE_URL: "{{.BASE_URL | default .PRODUCTION_BASE_URL}}"
+      INGEST_API_TOKEN: "{{.INGEST_API_TOKEN | default .LOCAL_INGEST_API_TOKEN}}"
+      PROPOSAL_ID: "{{.PROPOSAL_ID | default .LOCAL_PROPOSAL_ID}}"
+      AGENT_CONFIDENCE: "{{.AGENT_CONFIDENCE | default .LOCAL_AGENT_CONFIDENCE}}"
+      AGENT_REASON: "{{.AGENT_REASON | default .LOCAL_AGENT_REASON}}"
+    cmds:
+      - >
+        curl -sS "$BASE_URL/admin/api/ingest/proposals/$PROPOSAL_ID/reject"
         -H "Authorization: Bearer $INGEST_API_TOKEN"
         -H "Content-Type: application/json"
         -d "$(jq -cn --argjson agent_confidence "$AGENT_CONFIDENCE" --arg agent_reason "$AGENT_REASON" '{agent_confidence:$agent_confidence,agent_reason:$agent_reason}')"

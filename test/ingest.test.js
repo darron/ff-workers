@@ -59,6 +59,34 @@ test('unsupported names and synthetic Jan. 1 dates are rejected', () => {
   assert.equal(__test.normalizeIncidentDate('2026-01-01', 'The incident happened January 1, 2026.'), '2026-01-01');
 });
 
+test('dead suspects are excluded from victim fatality counts', () => {
+  const sourceText = [
+    'The Quebec coroner identified the alleged shooter as Seth Scott Hatfield, 25, from Lethbridge, Alberta,',
+    'and identified the two others killed as police officer Mohamed Lamine Benredouane, 34,',
+    'and Michel Mizrahi, 68, a bystander caught in the crossfire.',
+    'The suspect armed with a long gun opened fire Monday before officers returned fire, killing him.',
+    'A second officer was seriously injured in the shooting in Montreal but is in stable condition.',
+    'Another civilian sustained minor injuries.'
+  ].join(' ');
+
+  const facts = __test.normalizeExtractedFacts({
+    record_name: 'Hatfield',
+    suspect_name: 'Seth Scott Hatfield',
+    incident_date: '2026-06-22',
+    year: '2026',
+    city: 'Montreal',
+    province: 'QC',
+    victims: 3,
+    deaths: 3,
+    injuries: 2
+  }, sourceText);
+
+  assert.equal(facts.suspect_name, 'Seth Scott Hatfield');
+  assert.equal(facts.victims, 2);
+  assert.equal(facts.deaths, 3);
+  assert.equal(facts.injuries, 2);
+});
+
 test('hard candidate compatibility rejects location and count conflicts', () => {
   const candidate = {
     id: 'record-1',
