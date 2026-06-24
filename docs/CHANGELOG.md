@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-06-24
+
+### Agent Story Ingestion
+
+- Added production ingest Taskfile targets for proposal creation, review, record search, approval, rejection, and listing so operator-approved `task` runs can use the bearer-token proposal flow without ad hoc curl commands.
+- Tightened ingest extraction so dead suspects are excluded from victim-fatality counts while still counted in total deaths when the source says the suspect died.
+- Allowed reviewed create-record ingestion for narrow non-fatal police-firearm ambushes with at least two injured officers, so dbrain-authoritative law-enforcement shooting sources can be represented without bypassing the proposal flow.
+- Clarified AI record-summary synthesis prompts so record display names are not treated as incident locations and dead suspects are not described as apprehended unless a source says so.
+- Classified `rcmp.ca` as official and `ckom.com` as news so source badges, credibility notes, and AI synthesis prompts treat those incident sources as credible.
+- Added record page smoke-test Taskfile targets so agents can verify rendered staging or production record summaries through approved `task` commands instead of ad hoc `curl` pipelines.
+
 ## 2026-05-11
 
 ### Agent Story Ingestion

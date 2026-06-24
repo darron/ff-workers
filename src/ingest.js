@@ -943,18 +943,26 @@ function buildProposedNewRecord(facts, source, env) {
   const victims = nullableNumber(facts.victims);
   const deaths = nullableNumber(facts.deaths);
   const injuries = nullableNumber(facts.injuries);
+  const devicesUsed = nullableString(facts.devices_used);
+  const firearms = inferFirearms(facts);
 
   if (!source.text || !year || !city || !isCanadianProvinceCode(province)) {
     return null;
   }
 
-  if (!qualifiesForRecord(victims, deaths)) {
+  if (!qualifiesForRecord({
+    victims,
+    deaths,
+    injuries,
+    devicesUsed,
+    firearms,
+    sourceText: source.text
+  })) {
     return null;
   }
 
   const id = createUuid();
   const name = deriveRecordName(facts, source);
-  const devicesUsed = nullableString(facts.devices_used);
   const record = {
     id,
     date: recordDate,
@@ -967,7 +975,7 @@ function buildProposedNewRecord(facts, source, env) {
     injuries,
     suicide: null,
     devices_used: devicesUsed,
-    firearms: inferFirearms(facts),
+    firearms,
     possessed_legally: null,
     warnings: null,
     oic_impact: null,
@@ -1006,13 +1014,23 @@ function buildRecordForCreate(proposal) {
   const province = normalizeProvince(merged.province);
   const victims = nullableNumber(merged.victims);
   const deaths = nullableNumber(merged.deaths);
+  const injuries = nullableNumber(merged.injuries);
+  const devicesUsed = nullableString(merged.devices_used);
+  const firearms = nullableBooleanNumber(merged.firearms);
 
   if (!city || !isCanadianProvinceCode(province)) {
     return { ok: false, error: 'New record requires city and province.' };
   }
 
-  if (!qualifiesForRecord(victims, deaths)) {
-    return { ok: false, error: 'New record requires at least two victims or deaths.' };
+  if (!qualifiesForRecord({
+    victims,
+    deaths,
+    injuries,
+    devicesUsed,
+    firearms,
+    sourceText: proposal.extracted_text
+  })) {
+    return { ok: false, error: 'New record requires at least two victims/deaths or a qualifying police-firearm injury incident.' };
   }
 
   return {
@@ -1026,10 +1044,10 @@ function buildRecordForCreate(proposal) {
       licensed: nullableBooleanNumber(merged.licensed),
       victims,
       deaths,
-      injuries: nullableNumber(merged.injuries),
+      injuries,
       suicide: nullableBooleanNumber(merged.suicide),
-      devices_used: nullableString(merged.devices_used),
-      firearms: nullableBooleanNumber(merged.firearms),
+      devices_used: devicesUsed,
+      firearms,
       possessed_legally: nullableBooleanNumber(merged.possessed_legally),
       warnings: nullableString(merged.warnings),
       oic_impact: nullableBooleanNumber(merged.oic_impact),
@@ -1064,12 +1082,54 @@ async function insertRecord(env, record) {
   ).run();
 }
 
-function qualifiesForRecord(victims, deaths) {
+function qualifiesForRecord({ victims, deaths, injuries, devicesUsed, firearms, sourceText }) {
   const victimCount = Number(victims);
   const deathCount = Number(deaths);
-  return (
+  if (
     (Number.isFinite(victimCount) && victimCount >= 2) ||
     (Number.isFinite(deathCount) && deathCount >= 2)
+  ) {
+    return true;
+  }
+
+  return isQualifyingPoliceFirearmInjuryIncident({
+    injuries,
+    devicesUsed,
+    firearms,
+    sourceText
+  });
+}
+
+function isQualifyingPoliceFirearmInjuryIncident({ injuries, devicesUsed, firearms, sourceText }) {
+  const injuryCount = Number(injuries);
+  if (!Number.isFinite(injuryCount) || injuryCount < 2) {
+    return false;
+  }
+
+  if (!hasFirearmEvidence({ firearms, devicesUsed, sourceText })) {
+    return false;
+  }
+
+  return sourceMentionsInjuredOfficers(sourceText);
+}
+
+function hasFirearmEvidence({ firearms, devicesUsed, sourceText }) {
+  if (firearms === true || firearms === 1 || firearms === '1' || String(firearms).toLowerCase() === 'true') {
+    return true;
+  }
+
+  return /\b(?:firearm|gun|gunfire|rifle|shotgun|pistol|shooting|shot)\b/i.test(
+    `${devicesUsed || ''} ${sourceText || ''}`
+  );
+}
+
+function sourceMentionsInjuredOfficers(sourceText) {
+  const text = String(sourceText || '');
+  const officerPattern = String.raw`\b(?:rcmp\s+)?(?:officers?|constables?|mounties?)\b`;
+  const injuryPattern = String.raw`\b(?:shot|shooting|struck|injured|wounded)\b`;
+  return (
+    new RegExp(`${officerPattern}[^.!?]{0,160}${injuryPattern}`, 'i').test(text) ||
+    new RegExp(`${injuryPattern}[^.!?]{0,160}${officerPattern}`, 'i').test(text)
   );
 }
 
@@ -1836,6 +1896,11 @@ async function extractIncidentFacts(env, url, source) {
     '- record_name should be a short display name; prefer the accused/perpetrator surname when known.',
     '- city must be the incident municipality, First Nation, reserve, or community; do not use a nearby reference city from phrases like "east of Regina" when a more specific community is named.',
     '- Use Canadian province abbreviations when possible.',
+    '- victims is the number of non-perpetrator fatalities only; exclude any dead suspect, accused, shooter, gunman, or perpetrator.',
+    '- deaths is total deaths in the incident; include a dead suspect, shooter, gunman, or perpetrator when the source says they died.',
+    '- injuries is the number of non-fatal injured people; exclude people already counted as deaths.',
+    '- if the source says an officer/civilian and the suspect were killed, return victims=2 and deaths=3.',
+    '- if the source says three dead including the gunman/suspect, return victims=2 and deaths=3.',
     '- If a value is not clearly stated, return null.',
     '- incident_date is the event/death/incident date, not the article publication date.',
     '- never invent January 1; if only the event year is known, set incident_date to null and year to that event year.',
@@ -1893,7 +1958,7 @@ async function extractIncidentFacts(env, url, source) {
   const incidentName = sourceSupportsIncidentName(aiJson.incident_name, sourceText) ? nullableString(aiJson.incident_name) : null;
   const city = normalizeIncidentCity(aiJson.city, sourceText);
 
-  return {
+  return normalizeExtractedFacts({
     record_name: recordName,
     suspect_name: suspectName,
     incident_name: incidentName,
@@ -1909,7 +1974,73 @@ async function extractIncidentFacts(env, url, source) {
     firearms: typeof aiJson.firearms === 'boolean' ? aiJson.firearms : null,
     confidence: clamp(Number(aiJson.confidence), 0, 1),
     reasoning: normalizeText(aiJson.reasoning || '').slice(0, MAX_REASON_CHARS)
-  };
+  }, sourceText);
+}
+
+function normalizeExtractedFacts(facts, sourceText = '') {
+  const normalized = { ...(facts || {}) };
+  const text = normalizeText(sourceText).toLowerCase();
+  const victims = nullableNumber(normalized.victims);
+  const deaths = nullableNumber(normalized.deaths);
+
+  if (!text || !Number.isFinite(victims) || !Number.isFinite(deaths) || victims !== deaths || deaths <= 0) {
+    return normalized;
+  }
+
+  if (!sourceMentionsDeadSuspect(text, normalized.suspect_name)) {
+    return normalized;
+  }
+
+  const nonSuspectFatalities = extractNonSuspectFatalityCount(text);
+  if (Number.isFinite(nonSuspectFatalities) && nonSuspectFatalities >= 0 && nonSuspectFatalities < deaths) {
+    normalized.victims = nonSuspectFatalities;
+  }
+
+  return normalized;
+}
+
+function sourceMentionsDeadSuspect(text, suspectName = '') {
+  const suspectLastName = nullableString(suspectName)?.split(/\s+/).filter(Boolean).at(-1)?.toLowerCase() || '';
+  const suspectTerms = [
+    'suspect',
+    'shooter',
+    'gunman',
+    'perpetrator',
+    'assailant',
+    'accused'
+  ];
+
+  if (suspectLastName) {
+    suspectTerms.push(escapeRegExp(suspectLastName));
+  }
+
+  const termPattern = `(?:${suspectTerms.join('|')})`;
+  const deathPattern = '(?:killed|dead|died|shot dead|fatally shot|returned fire[^.!?]{0,80}killing him|returned fire[^.!?]{0,80}killing her)';
+  const before = new RegExp(`\\b${termPattern}\\b[^.!?]{0,140}\\b${deathPattern}\\b`, 'i');
+  const after = new RegExp(`\\b${deathPattern}\\b[^.!?]{0,140}\\b${termPattern}\\b`, 'i');
+  return before.test(text) || after.test(text);
+}
+
+function extractNonSuspectFatalityCount(text) {
+  const twoOthersPatterns = [
+    /\b(?:identified|confirmed|named)[^.!?]{0,120}\b(?:two|2)\s+others\s+killed\b/i,
+    /\b(?:two|2)\s+(?:other|additional)\s+(?:people|persons|victims|individuals)?\s*(?:were\s+)?(?:killed|dead|died)\b/i
+  ];
+  if (twoOthersPatterns.some((pattern) => pattern.test(text))) {
+    return 2;
+  }
+
+  const officerCivilianPatterns = [
+    /\b(?:a\s+)?(?:police\s+)?officer\b[^.!?]{0,120}\b(?:a\s+)?(?:civilian|bystander)\b[^.!?]{0,120}\b(?:killed|dead|died)\b/i,
+    /\b(?:a\s+)?(?:civilian|bystander)\b[^.!?]{0,120}\b(?:a\s+)?(?:police\s+)?officer\b[^.!?]{0,120}\b(?:killed|dead|died)\b/i,
+    /\b(?:a\s+)?(?:police\s+)?officer\s+and\s+(?:a\s+)?(?:civilian|bystander)\s+(?:were\s+)?(?:killed|dead|died)\b/i,
+    /\b(?:a\s+)?(?:civilian|bystander)\s+and\s+(?:a\s+)?(?:police\s+)?officer\s+(?:were\s+)?(?:killed|dead|died)\b/i
+  ];
+  if (officerCivilianPatterns.some((pattern) => pattern.test(text))) {
+    return 2;
+  }
+
+  return Number.NaN;
 }
 
 function heuristicFacts(source) {
@@ -3188,6 +3319,7 @@ function isMissingIngestSchemaError(error) {
 
 export const __test = {
   approveProposal,
+  buildProposedNewRecord,
   buildUrlLookupVariants,
   candidateHardFieldsCompatible,
   candidateHasStrongAttachEvidence,
@@ -3196,6 +3328,7 @@ export const __test = {
   fetchSourceContent,
   normalizeIncidentCity,
   normalizeIncidentDate,
+  normalizeExtractedFacts,
   parseJsonObject,
   parseRecordSearchParams,
   scoreRecordCandidate,

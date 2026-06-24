@@ -59,6 +59,88 @@ test('unsupported names and synthetic Jan. 1 dates are rejected', () => {
   assert.equal(__test.normalizeIncidentDate('2026-01-01', 'The incident happened January 1, 2026.'), '2026-01-01');
 });
 
+test('dead suspects are excluded from victim fatality counts', () => {
+  const sourceText = [
+    'The Quebec coroner identified the alleged shooter as Seth Scott Hatfield, 25, from Lethbridge, Alberta,',
+    'and identified the two others killed as police officer Mohamed Lamine Benredouane, 34,',
+    'and Michel Mizrahi, 68, a bystander caught in the crossfire.',
+    'The suspect armed with a long gun opened fire Monday before officers returned fire, killing him.',
+    'A second officer was seriously injured in the shooting in Montreal but is in stable condition.',
+    'Another civilian sustained minor injuries.'
+  ].join(' ');
+
+  const facts = __test.normalizeExtractedFacts({
+    record_name: 'Hatfield',
+    suspect_name: 'Seth Scott Hatfield',
+    incident_date: '2026-06-22',
+    year: '2026',
+    city: 'Montreal',
+    province: 'QC',
+    victims: 3,
+    deaths: 3,
+    injuries: 2
+  }, sourceText);
+
+  assert.equal(facts.suspect_name, 'Seth Scott Hatfield');
+  assert.equal(facts.victims, 2);
+  assert.equal(facts.deaths, 3);
+  assert.equal(facts.injuries, 2);
+});
+
+test('proposal builder creates records for police firearm ambush injuries only', () => {
+  const source = {
+    text: [
+      'On June 21, 2026, Melville RCMP received a report of an assault at a residence.',
+      'As officers arrived at the scene, a firearm was discharged, and two Melville RCMP officers were struck.',
+      'Both officers were transported to hospital with injuries described as serious in nature.'
+    ].join(' '),
+    publishedAt: '2026-06-22T12:00:00.000Z'
+  };
+
+  const proposed = __test.buildProposedNewRecord({
+    record_name: 'Dodge',
+    suspect_name: 'Markus Dodge',
+    incident_date: '2026-06-21',
+    year: '2026',
+    city: 'Melville',
+    province: 'SK',
+    victims: null,
+    deaths: null,
+    injuries: 2,
+    devices_used: 'firearm',
+    firearms: true,
+    confidence: 1
+  }, source, {});
+
+  assert.ok(proposed);
+  assert.equal(proposed.record.name, 'Dodge');
+  assert.equal(proposed.record.city, 'Melville');
+  assert.equal(proposed.record.province, 'SK');
+  assert.equal(proposed.record.victims, null);
+  assert.equal(proposed.record.deaths, null);
+  assert.equal(proposed.record.injuries, 2);
+  assert.equal(proposed.record.firearms, 1);
+
+  const generic = __test.buildProposedNewRecord({
+    record_name: 'Unknown',
+    incident_date: '2026-06-21',
+    year: '2026',
+    city: 'Melville',
+    province: 'SK',
+    victims: null,
+    deaths: null,
+    injuries: 2,
+    devices_used: 'firearm',
+    firearms: true,
+    confidence: 1
+  }, {
+    text: 'Police said two people were shot and injured during a dispute at a residence.',
+    publishedAt: '2026-06-22T12:00:00.000Z'
+  }, {});
+
+  assert.equal(generic, null);
+});
+
 test('hard candidate compatibility rejects location and count conflicts', () => {
   const candidate = {
     id: 'record-1',
@@ -313,6 +395,64 @@ test('create-record proposal can be agent-redirected to an existing record', asy
   const decision = JSON.parse(env.updatedProposal.decision_json);
   assert.equal(decision.agent_redirect_record_id, 'existing-record-id');
   assert.equal(decision.worker_proposed_record_id, 'new-record-id');
+});
+
+test('create-record approval allows police firearm ambush with two injured officers', async () => {
+  const env = makeIngestApprovalEnv({
+    proposal: {
+      id: 'ingest_melville',
+      url: 'https://rcmp.ca/en/saskatchewan/news/2026/06/4354309',
+      normalized_url: 'https://rcmp.ca/en/saskatchewan/news/2026/06/4354309',
+      status: 'worker_proposed',
+      proposed_action: 'create_record',
+      proposed_record_id: 'melville-record-id',
+      proposed_story_id: 'story_melville',
+      worker_confidence: 1,
+      worker_reason: 'No existing record matched this Melville RCMP shooting.',
+      extracted_text: 'Two Melville RCMP officers were struck by gunfire while arriving at a residence. '.repeat(12),
+      decision_json: JSON.stringify({
+        proposed_record: {
+          id: 'melville-record-id',
+          date: '2026-06-21',
+          name: 'Dodge',
+          city: 'Melville',
+          province: 'SK',
+          victims: null,
+          deaths: null,
+          injuries: 2,
+          devices_used: 'firearm',
+          firearms: true
+        }
+      }),
+      created_at: '2026-06-24T00:00:00.000Z',
+      updated_at: '2026-06-24T00:00:00.000Z'
+    },
+    existingRecord: null
+  });
+
+  const request = new Request('https://example.test/admin/api/ingest/proposals/ingest_melville/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: 'melville-record-id',
+      agent_confidence: 0.95,
+      agent_reason: 'Official RCMP source says two officers were shot and seriously injured in Melville.'
+    })
+  });
+
+  const response = await __test.approveProposal(request, env, 'ingest_melville');
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'applied');
+  assert.equal(body.record_id, 'melville-record-id');
+  assert.equal(env.insertedStory.record_id, 'melville-record-id');
+  assert.equal(env.summary.reason, 'ingest_record_created');
+
+  const decision = JSON.parse(env.updatedProposal.decision_json);
+  assert.equal(decision.applied_record.injuries, 2);
+  assert.equal(decision.applied_record.victims, null);
+  assert.equal(decision.applied_record.deaths, null);
 });
 
 test('needs-review attachment can be force-applied to an existing record', async () => {

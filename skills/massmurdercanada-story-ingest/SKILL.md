@@ -19,6 +19,30 @@ Use bearer auth:
 Authorization: Bearer <INGEST_API_TOKEN>
 ```
 
+## Local Evidence Repository Updates
+
+When a user identifies a local evidence repository, saved-source queue, or dbrain corpus as the list of candidate site updates, treat those saved items as the prioritization signal. Still inspect the saved item/source text before acting.
+
+If dbrain tools are available, use the `dbrain-mcp` and/or `dbrain-review` skill first:
+
+- Search by concrete handles from the event: place, suspect/accused name, victim names, police force, article title, and distinctive phrases.
+- Load details with `dbrain_get_many` before relying on snippets.
+- Follow backlinks from saved X posts to linked `src:*` web sources.
+- Prefer substantive source URLs such as official releases and news articles over social posts.
+- Attach social posts only when they add distinct evidence, media transcript/OCR, or context, and the core incident is corroborated by official/news sources.
+- If a saved item appears relevant but the ingest API cannot create or attach it safely, do not bypass the proposal flow. Report the eligibility or metadata gap.
+
+For recurring repo work, prefer Taskfile wrappers over ad hoc curl:
+
+- `task production:ingest:search`
+- `task production:ingest:create`
+- `task production:ingest:get`
+- `task production:ingest:approve`
+- `task production:ingest:reject`
+- `task production:record:smoke`
+
+Production deploys still require explicit fresh human approval, even when a previous deploy was approved in the same session.
+
 ## Core Rule
 
 Do not write directly to `/admin/api/stories` for normal ingestion.
@@ -222,3 +246,5 @@ Summarize each URL with:
 - one-line reason
 
 If anything needs review, say exactly why.
+
+When checking the rendered result, use `task production:record:smoke RECORD_ID=<uuid>` when available and report the record title, classification, credibility, and attached source types. If the AI synthesis remains stale after sources or classifier behavior change, ask the human to regenerate the record summary from the admin UI/session.

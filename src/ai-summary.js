@@ -463,39 +463,7 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
     };
   }
 
-  const prompt = [
-    'Create a cross-source synthesis for this incident.',
-    'Return clean, readable markdown only. Do not use raw HTML.',
-    'Use these labels exactly, in this order:',
-    '**Classification:**',
-    '**Incident Summary:**',
-    '**Well-Supported Details:**',
-    '**Unverified or Conflicting Claims:**',
-    '**Source Quality Notes:**',
-    'Write the classification as one of: alleged, reported, corroborated.',
-    'Write the incident summary as one short paragraph.',
-    'Write the detail sections as bullets.',
-    'Do not copy source summaries verbatim.',
-    'Do not include page chrome, share links, scripts, metadata, image URLs, or extractor artifacts.',
-    'Do not mention source numbers unless necessary to describe a conflict.',
-    '',
-    'Classification rules:',
-    '- alleged: only social-media claims and no independent credible sources',
-    '- reported: at least one credible source',
-    '- corroborated: two or more independent credible sources align on core facts',
-    '- treat incident date from metadata as YEAR-ONLY; do not infer month/day unless sources explicitly provide them',
-    '',
-    `Record: ${record.name || ''} in ${record.city || ''}, ${record.province || ''} (${recordYear || 'unknown year'})`,
-    `Incident year (authoritative, year precision only): ${recordYear || 'unknown'}`,
-    `Victims/deaths/injuries: ${record.victims ?? ''}/${record.deaths ?? ''}/${record.injuries ?? ''}`,
-    `Devices used: ${record.devices_used || 'N/A'}`,
-    `Warnings: ${record.warnings || 'N/A'}`,
-    `Credibility counts: credible=${credibility.credible}, social=${credibility.social}, other=${credibility.other}`,
-    omittedCount > 0 ? `Only first ${orderedRows.length} sources provided; ${omittedCount} omitted for context limits.` : 'All sources included.',
-    '',
-    'Sources:',
-    ...orderedRows.map((row, index) => `${index + 1}. [${row.sourceType}] ${row.url}\nSummary: ${row.summary || 'No summary available.'}`)
-  ].join('\n');
+  const prompt = buildRecordSynthesisPrompt(record, credibility, orderedRows, omittedCount);
 
   const aiText = await runAiText(env, prompt, 900, runtimeState);
   if (aiText) {
@@ -513,6 +481,52 @@ async function buildRecordSummary(env, record, stories, runtimeState) {
     sourceCount: orderedRows.length,
     omittedCount
   };
+}
+
+function buildRecordSynthesisPrompt(record, credibility, orderedRows, omittedCount) {
+  const recordYear = extractYearOnly(record.date);
+  return [
+    'Create a cross-source synthesis for this incident.',
+    'Return clean, readable markdown only. Do not use raw HTML.',
+    'Use these labels exactly, in this order:',
+    '**Classification:**',
+    '**Incident Summary:**',
+    '**Well-Supported Details:**',
+    '**Unverified or Conflicting Claims:**',
+    '**Source Quality Notes:**',
+    'Write the classification as one of: alleged, reported, corroborated.',
+    'Write the incident summary as one short paragraph.',
+    'Write the detail sections as bullets.',
+    'Do not copy source summaries verbatim.',
+    'Do not include page chrome, share links, scripts, metadata, image URLs, or extractor artifacts.',
+    'Do not mention source numbers unless necessary to describe a conflict.',
+    'The record display name is not part of the location. Use only the Incident location line for location.',
+    'Do not say a suspect was apprehended, arrested, captured, or in custody unless a source summary explicitly says that.',
+    'If deaths include a suspect and a source says the suspect or gunman was killed, say the suspect was killed or died.',
+    'Keep victim, bystander, officer, civilian, community-member, and suspect roles separate.',
+    'Never describe a person as the suspect, shooter, gunman, or attacker unless a source summary explicitly assigns that role to that person.',
+    'Do not list a victim or bystander name as a suspect-identity conflict merely because that person is named in a source.',
+    'Interpret victims/deaths/injuries as: victims are non-suspect fatalities; deaths are total deaths including a killed suspect when applicable; injuries are non-fatal injured people.',
+    'Do not call two victim deaths versus three total deaths a conflict when the third death is the suspect.',
+    '',
+    'Classification rules:',
+    '- alleged: only social-media claims and no independent credible sources',
+    '- reported: at least one credible source',
+    '- corroborated: two or more independent credible sources align on core facts',
+    '- treat incident date from metadata as YEAR-ONLY; do not infer month/day unless sources explicitly provide them',
+    '',
+    `Record display name: ${record.name || 'unknown'}`,
+    `Incident location: ${record.city || 'unknown city'}, ${record.province || 'unknown province'}`,
+    `Incident year (authoritative, year precision only): ${recordYear || 'unknown'}`,
+    `Victims/deaths/injuries: ${record.victims ?? ''}/${record.deaths ?? ''}/${record.injuries ?? ''}`,
+    `Devices used: ${record.devices_used || 'N/A'}`,
+    `Warnings: ${record.warnings || 'N/A'}`,
+    `Credibility counts: credible=${credibility.credible}, social=${credibility.social}, other=${credibility.other}`,
+    omittedCount > 0 ? `Only first ${orderedRows.length} sources provided; ${omittedCount} omitted for context limits.` : 'All sources included.',
+    '',
+    'Sources:',
+    ...orderedRows.map((row, index) => `${index + 1}. [${row.sourceType}] ${row.url}\nSummary: ${row.summary || 'No summary available.'}`)
+  ].join('\n');
 }
 
 function normalizeSynthesisClassification(text, classification) {
@@ -1678,3 +1692,7 @@ function heuristicSummary(text) {
 
   return `${normalized.slice(0, 550)}...`;
 }
+
+export const __test = {
+  buildRecordSynthesisPrompt
+};
