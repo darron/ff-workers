@@ -46,6 +46,7 @@ function extractId(path, prefix) {
 const ROBOTS_TXT = [
   'User-agent: *',
   'Allow: /',
+  'Content-Signal: ai-train=no, search=yes, ai-input=yes',
   'Disallow: /admin',
   'Disallow: /admin/',
   'Disallow: /admin/api/',

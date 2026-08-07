@@ -6,6 +6,7 @@
 
 - Added a valid plain-text `/robots.txt` response that allows public crawling and excludes the `/admin` namespace.
 - Added a dynamically generated `/sitemap.xml` for canonical public pages, referenced from `/robots.txt` and cached for one hour.
+- Declared `ai-train=no`, `search=yes`, and `ai-input=yes` Content Signals for the site’s published content in `/robots.txt`.
 
 ### Markdown for Agents
 
