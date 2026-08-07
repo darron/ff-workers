@@ -17,6 +17,12 @@ import { renderLoginPage, renderAdminDashboard } from './admin-ui.js';
 import { processSummaryQueue } from './ai-summary.js';
 import { renderSitemapXml, SITEMAP_URL } from './sitemap.js';
 import {
+  AGENT_SKILLS_INDEX_PATH,
+  MASS_MURDER_CANADA_RESEARCH_SKILL_PATH,
+  MASS_MURDER_CANADA_RESEARCH_SKILL,
+  renderAgentSkillsIndex
+} from './agent-skills.js';
+import {
   renderCanadaMapPageMarkdown,
   renderHomePageMarkdown,
   renderNegotiatedPage,
@@ -58,6 +64,10 @@ const workerHandler = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    const isMarkdownAlias = path.endsWith('.md') && path !== '/.md' && !path.startsWith('/admin/');
+    const publicPath = path === '/index.md'
+      ? '/'
+      : isMarkdownAlias ? path.slice(0, -3) || '/' : path;
     const method = request.method;
 
     if (path === '/robots.txt') {
@@ -65,6 +75,10 @@ const workerHandler = {
         status: 200,
         headers: { 'Content-Type': 'text/plain; charset=utf-8' }
       });
+    }
+
+    if (path === AGENT_SKILLS_INDEX_PATH || path === MASS_MURDER_CANADA_RESEARCH_SKILL_PATH) {
+      return handleAgentSkillsRoute(path, method);
     }
 
     // Verify DB binding exists
@@ -102,35 +116,37 @@ const workerHandler = {
 
       // Public routes
       // Home page
-      if (path === '/') {
+      if (publicPath === '/') {
         const records = await getAllRecords(env);
         return renderNegotiatedPage(
           request,
-          () => renderHomePage(records, path),
-          () => renderHomePageMarkdown(records, path)
+          () => renderHomePage(records, publicPath),
+          () => renderHomePageMarkdown(records, publicPath),
+          { forceMarkdown: isMarkdownAlias }
         );
       }
 
       // Dedicated Canada map page
-      if (path === '/map') {
+      if (publicPath === '/map') {
         return new Response(null, {
           status: 302,
           headers: { 'Location': '/map/canada' }
         });
       }
 
-      if (path === '/map/canada') {
+      if (publicPath === '/map/canada') {
         const allRecords = await getAllRecordsForMap(env);
         return renderNegotiatedPage(
           request,
-          () => renderCanadaMapPage(allRecords, path),
-          () => renderCanadaMapPageMarkdown(allRecords, path)
+          () => renderCanadaMapPage(allRecords, publicPath),
+          () => renderCanadaMapPageMarkdown(allRecords, publicPath),
+          { forceMarkdown: isMarkdownAlias }
         );
       }
 
       // Group filtering: /records/group/:group
-      if (path.startsWith('/records/group/')) {
-        const group = extractId(path, '/records/group/');
+      if (publicPath.startsWith('/records/group/')) {
+        const group = extractId(publicPath, '/records/group/');
         if (!group) {
           return new Response('Invalid group', { status: 400 });
         }
@@ -138,14 +154,15 @@ const workerHandler = {
         const filteredRecords = filterRecordsByGroup(allRecords, group);
         return renderNegotiatedPage(
           request,
-          () => renderHomePage(filteredRecords, path),
-          () => renderHomePageMarkdown(filteredRecords, path)
+          () => renderHomePage(filteredRecords, publicPath),
+          () => renderHomePageMarkdown(filteredRecords, publicPath),
+          { forceMarkdown: isMarkdownAlias }
         );
       }
 
       // Province filtering: /records/provinces/:province
-      if (path.startsWith('/records/provinces/')) {
-        const province = extractId(path, '/records/provinces/');
+      if (publicPath.startsWith('/records/provinces/')) {
+        const province = extractId(publicPath, '/records/provinces/');
         if (!province) {
           return new Response('Invalid province', { status: 400 });
         }
@@ -153,14 +170,15 @@ const workerHandler = {
         const filteredRecords = filterRecordsByProvince(allRecords, province);
         return renderNegotiatedPage(
           request,
-          () => renderHomePage(filteredRecords, path),
-          () => renderHomePageMarkdown(filteredRecords, path)
+          () => renderHomePage(filteredRecords, publicPath),
+          () => renderHomePageMarkdown(filteredRecords, publicPath),
+          { forceMarkdown: isMarkdownAlias }
         );
       }
 
       // Individual record: /records/:id
-      if (path.startsWith('/records/')) {
-        const id = extractId(path, '/records/');
+      if (publicPath.startsWith('/records/')) {
+        const id = extractId(publicPath, '/records/');
         if (!id) {
           return new Response('Invalid record ID', { status: 400 });
         }
@@ -170,8 +188,9 @@ const workerHandler = {
         }
         return renderNegotiatedPage(
           request,
-          () => renderRecordPage(record, path),
-          () => renderRecordPageMarkdown(record, path)
+          () => renderRecordPage(record, publicPath),
+          () => renderRecordPageMarkdown(record, publicPath),
+          { forceMarkdown: isMarkdownAlias }
         );
       }
 
@@ -199,6 +218,31 @@ export default Sentry.withSentry(
   }),
   workerHandler
 );
+
+function handleAgentSkillsRoute(path, method) {
+  if (method !== 'GET' && method !== 'HEAD') {
+    return new Response('Method Not Allowed', {
+      status: 405,
+      headers: {
+        Allow: 'GET, HEAD',
+        'Content-Type': 'text/plain; charset=utf-8'
+      }
+    });
+  }
+
+  const isIndex = path === AGENT_SKILLS_INDEX_PATH;
+  const body = isIndex ? renderAgentSkillsIndex() : MASS_MURDER_CANADA_RESEARCH_SKILL;
+  const headers = {
+    'Content-Type': isIndex ? 'application/json; charset=utf-8' : 'text/markdown; charset=utf-8',
+    'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+    'Access-Control-Allow-Origin': '*'
+  };
+
+  return new Response(method === 'HEAD' ? null : body, {
+    status: 200,
+    headers
+  });
+}
 
 /**
  * Handle admin routes

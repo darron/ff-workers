@@ -12,6 +12,15 @@
 
 - Added application-level Markdown templates and `Accept: text/markdown` negotiation for public home, map, filtered, and record pages while retaining HTML as the default.
 
+### WebMCP for Agents
+
+- Exposed read-only province, record-type, record-list, and record retrieval tools through the page's WebMCP integration when supported by the browser.
+- Added public `.md` aliases for agent-facing links while keeping canonical browser and sitemap URLs unchanged.
+
+### Agent Skills Discovery
+
+- Published a digest-verified Agent Skills index and a site research skill describing the read-only WebMCP and Markdown workflows.
+
 ## 2026-06-24
 
 ### Agent Story Ingestion
