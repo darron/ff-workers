@@ -57,8 +57,8 @@ export function acceptsMarkdown(request) {
 /**
  * Render exactly one public representation and keep caches separate by Accept.
  */
-export function renderNegotiatedPage(request, renderHtml, renderMarkdown) {
-  if (acceptsMarkdown(request)) {
+export function renderNegotiatedPage(request, renderHtml, renderMarkdown, options = {}) {
+  if (options.forceMarkdown || acceptsMarkdown(request)) {
     const body = String(renderMarkdown() || '');
     const headers = {
       'Content-Type': MARKDOWN_CONTENT_TYPE,

@@ -12,6 +12,7 @@ import {
   CANADA_POPULATION_REF_DATE,
   CANADA_PROVINCE_GEOGRAPHY
 } from './canada-map-data.js';
+import { renderWebMcpScript } from './webmcp.js';
 
 const PROVINCE_COLOR_RAMP = ['#d9e8f8', '#b8d3ed', '#90b8e2', '#6294cd', '#3d73af', '#1b4f82'];
 const MAP_METRIC_MODES = [
@@ -1647,6 +1648,7 @@ function renderFooter() {
         <p>Copyright &copy; ${new Date().getFullYear()} Mass Murder Canada</p>
         <p>Contact: <a href="mailto:darron@massmurdercanada.org">darron@massmurdercanada.org</a></p>
     </footer>
+    ${renderWebMcpScript()}
   `;
 }
 
