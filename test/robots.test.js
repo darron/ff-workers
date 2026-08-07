@@ -15,6 +15,7 @@ test('serves robots.txt as plain text before requiring the database', async () =
   assert.equal(await response.text(), [
     'User-agent: *',
     'Allow: /',
+    'Content-Signal: ai-train=no, search=yes, ai-input=yes',
     'Disallow: /admin',
     'Disallow: /admin/',
     'Disallow: /admin/api/',
