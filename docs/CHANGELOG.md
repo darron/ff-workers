@@ -11,6 +11,7 @@
 ### Markdown for Agents
 
 - Added application-level Markdown templates and `Accept: text/markdown` negotiation for public home, map, filtered, and record pages while retaining HTML as the default.
+- Added public-page `Link` headers advertising the Agent Skills index and each page's Markdown alternate representation.
 
 ### WebMCP for Agents
 

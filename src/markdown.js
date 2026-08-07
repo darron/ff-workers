@@ -7,6 +7,7 @@ import {
 
 const MARKDOWN_CONTENT_TYPE = 'text/markdown; charset=utf-8';
 const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
+const AGENT_SKILLS_INDEX_PATH = '/.well-known/agent-skills/index.json';
 const MARKDOWN_NOTE = '> NOTE: Mass killings are defined as 4+ victim deaths.';
 const CONTACT_LINK = '[darron@massmurdercanada.org](mailto:darron@massmurdercanada.org)';
 
@@ -58,11 +59,14 @@ export function acceptsMarkdown(request) {
  * Render exactly one public representation and keep caches separate by Accept.
  */
 export function renderNegotiatedPage(request, renderHtml, renderMarkdown, options = {}) {
+  const linkHeader = buildPageLinkHeader(request);
+
   if (options.forceMarkdown || acceptsMarkdown(request)) {
     const body = String(renderMarkdown() || '');
     const headers = {
       'Content-Type': MARKDOWN_CONTENT_TYPE,
       'Vary': 'Accept',
+      'Link': linkHeader,
       'x-markdown-tokens': String(estimateMarkdownTokens(body))
     };
     return new Response(body, { headers });
@@ -71,9 +75,29 @@ export function renderNegotiatedPage(request, renderHtml, renderMarkdown, option
   return new Response(String(renderHtml() || ''), {
     headers: {
       'Content-Type': HTML_CONTENT_TYPE,
-      'Vary': 'Accept'
+      'Vary': 'Accept',
+      'Link': linkHeader
     }
   });
+}
+
+function buildPageLinkHeader(request) {
+  const requestUrl = new URL(request.url);
+  const markdownUrl = new URL(requestUrl);
+  markdownUrl.pathname = markdownPathname(requestUrl.pathname);
+
+  return [
+    `<${new URL(AGENT_SKILLS_INDEX_PATH, requestUrl).href}>; rel="describedby"`,
+    `<${markdownUrl.href}>; rel="alternate"; type="text/markdown"`
+  ].join(', ');
+}
+
+function markdownPathname(pathname) {
+  if (pathname === '/index.md' || pathname.endsWith('.md')) {
+    return pathname;
+  }
+
+  return pathname === '/' ? '/index.md' : `${pathname}.md`;
 }
 
 export function renderHomePageMarkdown(records = [], currentPath = '/') {
