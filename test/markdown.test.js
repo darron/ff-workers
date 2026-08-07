@@ -133,6 +133,39 @@ test('negotiates filtered pages and respects an explicit zero Markdown quality',
   assert.equal(html.headers.get('content-type'), 'text/html; charset=utf-8');
 });
 
+test('advertises Agent Skills and Markdown alternates on every public page', async () => {
+  const pages = [
+    ['/', '/index.md'],
+    ['/index.md', '/index.md'],
+    ['/map/canada', '/map/canada.md'],
+    ['/map/canada.md', '/map/canada.md'],
+    ['/records/group/mass', '/records/group/mass.md'],
+    ['/records/group/mass.md', '/records/group/mass.md'],
+    ['/records/provinces/ab', '/records/provinces/ab.md'],
+    ['/records/provinces/ab.md', '/records/provinces/ab.md'],
+    ['/records/record-1', '/records/record-1.md'],
+    ['/records/record-1.md', '/records/record-1.md']
+  ];
+
+  for (const [path, markdownPath] of pages) {
+    const response = await fetchPage(path, createEnv(), { Accept: 'text/html' });
+    const link = response.headers.get('link');
+
+    assert.equal(response.status, 200, path);
+    assert.ok(link, path);
+    assert.match(
+      link,
+      /<https:\/\/massmurdercanada\.org\/\.well-known\/agent-skills\/index\.json>; rel="describedby"/,
+      path
+    );
+    assert.match(
+      link,
+      new RegExp(`<https:\\/\\/massmurdercanada\\.org${markdownPath.replaceAll('/', '\\/')}>; rel="alternate"; type="text\\/markdown"`),
+      path
+    );
+  }
+});
+
 test('does not negotiate Markdown for robots or sitemap responses', async () => {
   const env = createEnv();
   const robots = await fetchPage('/robots.txt', env, { Accept: 'text/markdown' });
@@ -140,4 +173,6 @@ test('does not negotiate Markdown for robots or sitemap responses', async () => 
 
   assert.equal(robots.headers.get('content-type'), 'text/plain; charset=utf-8');
   assert.equal(sitemap.headers.get('content-type'), 'application/xml; charset=utf-8');
+  assert.equal(robots.headers.get('link'), null);
+  assert.equal(sitemap.headers.get('link'), null);
 });
