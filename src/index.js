@@ -16,6 +16,12 @@ import { authenticate, destroySession, isAuthenticated, isIngestTokenAuthenticat
 import { renderLoginPage, renderAdminDashboard } from './admin-ui.js';
 import { processSummaryQueue } from './ai-summary.js';
 import { renderSitemapXml, SITEMAP_URL } from './sitemap.js';
+import {
+  renderCanadaMapPageMarkdown,
+  renderHomePageMarkdown,
+  renderNegotiatedPage,
+  renderRecordPageMarkdown
+} from './markdown.js';
 
 /**
  * Validate and sanitize path segments to prevent path traversal
@@ -97,9 +103,11 @@ const workerHandler = {
       // Home page
       if (path === '/') {
         const records = await getAllRecords(env);
-        return new Response(renderHomePage(records, path), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
+        return renderNegotiatedPage(
+          request,
+          () => renderHomePage(records, path),
+          () => renderHomePageMarkdown(records, path)
+        );
       }
 
       // Dedicated Canada map page
@@ -112,9 +120,11 @@ const workerHandler = {
 
       if (path === '/map/canada') {
         const allRecords = await getAllRecordsForMap(env);
-        return new Response(renderCanadaMapPage(allRecords, path), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
+        return renderNegotiatedPage(
+          request,
+          () => renderCanadaMapPage(allRecords, path),
+          () => renderCanadaMapPageMarkdown(allRecords, path)
+        );
       }
 
       // Group filtering: /records/group/:group
@@ -125,9 +135,11 @@ const workerHandler = {
         }
         const allRecords = await getAllRecords(env);
         const filteredRecords = filterRecordsByGroup(allRecords, group);
-        return new Response(renderHomePage(filteredRecords, path), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
+        return renderNegotiatedPage(
+          request,
+          () => renderHomePage(filteredRecords, path),
+          () => renderHomePageMarkdown(filteredRecords, path)
+        );
       }
 
       // Province filtering: /records/provinces/:province
@@ -138,9 +150,11 @@ const workerHandler = {
         }
         const allRecords = await getAllRecords(env);
         const filteredRecords = filterRecordsByProvince(allRecords, province);
-        return new Response(renderHomePage(filteredRecords, path), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
+        return renderNegotiatedPage(
+          request,
+          () => renderHomePage(filteredRecords, path),
+          () => renderHomePageMarkdown(filteredRecords, path)
+        );
       }
 
       // Individual record: /records/:id
@@ -153,9 +167,11 @@ const workerHandler = {
         if (!record) {
           return new Response('Record not found', { status: 404 });
         }
-        return new Response(renderRecordPage(record, path), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
-        });
+        return renderNegotiatedPage(
+          request,
+          () => renderRecordPage(record, path),
+          () => renderRecordPageMarkdown(record, path)
+        );
       }
 
       // 404

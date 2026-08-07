@@ -949,7 +949,7 @@ export function renderCanadaMapPage(records, currentPath = '/map/canada') {
 </html>`;
 }
 
-function buildProvinceMapData(records) {
+export function buildProvinceMapData(records) {
   const byCode = {};
   let unmappedCount = 0;
 

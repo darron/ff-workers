@@ -7,6 +7,10 @@
 - Added a valid plain-text `/robots.txt` response that allows public crawling and excludes the `/admin` namespace.
 - Added a dynamically generated `/sitemap.xml` for canonical public pages, referenced from `/robots.txt` and cached for one hour.
 
+### Markdown for Agents
+
+- Added application-level Markdown templates and `Accept: text/markdown` negotiation for public home, map, filtered, and record pages while retaining HTML as the default.
+
 ## 2026-06-24
 
 ### Agent Story Ingestion
