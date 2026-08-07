@@ -36,11 +36,27 @@ function extractId(path, prefix) {
   return sanitizePathSegment(segment);
 }
 
+const ROBOTS_TXT = [
+  'User-agent: *',
+  'Allow: /',
+  'Disallow: /admin',
+  'Disallow: /admin/',
+  'Disallow: /admin/api/',
+  ''
+].join('\n');
+
 const workerHandler = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+
+    if (path === '/robots.txt') {
+      return new Response(ROBOTS_TXT, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    }
 
     // Verify DB binding exists
     if (!env.DB) {
