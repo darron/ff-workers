@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-06
+
+### Crawl Rules
+
+- Added a valid plain-text `/robots.txt` response that allows public crawling and excludes the `/admin` namespace.
+
 ## 2026-06-24
 
 ### Agent Story Ingestion
