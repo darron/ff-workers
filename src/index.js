@@ -15,6 +15,7 @@ import { handleAdminAPI } from './admin.js';
 import { authenticate, destroySession, isAuthenticated, isIngestTokenAuthenticated, setSessionCookie, clearSessionCookie } from './auth.js';
 import { renderLoginPage, renderAdminDashboard } from './admin-ui.js';
 import { processSummaryQueue } from './ai-summary.js';
+import { renderSitemapXml, SITEMAP_URL } from './sitemap.js';
 
 /**
  * Validate and sanitize path segments to prevent path traversal
@@ -42,6 +43,7 @@ const ROBOTS_TXT = [
   'Disallow: /admin',
   'Disallow: /admin/',
   'Disallow: /admin/api/',
+  `Sitemap: ${SITEMAP_URL}`,
   ''
 ].join('\n');
 
@@ -75,6 +77,17 @@ const workerHandler = {
     }
 
     try {
+      if (path === '/sitemap.xml') {
+        const records = await getAllRecords(env);
+        return new Response(renderSitemapXml(records), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/xml; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600, s-maxage=3600'
+          }
+        });
+      }
+
       // Admin routes (require authentication)
       if (path === '/admin' || path.startsWith('/admin/')) {
         return await handleAdminRoutes(request, env, path, method);
