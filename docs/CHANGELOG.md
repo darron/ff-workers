@@ -5,6 +5,7 @@
 ### Crawl Rules
 
 - Added a valid plain-text `/robots.txt` response that allows public crawling and excludes the `/admin` namespace.
+- Added a dynamically generated `/sitemap.xml` for canonical public pages, referenced from `/robots.txt` and cached for one hour.
 
 ## 2026-06-24
 
